@@ -40,6 +40,7 @@ review in the original conversation.
 - Waits until the delegated agent exits or publishes `done.md`
 - Detects if the tmux pane exits before completion
 - Kills the delegated pane after completion
+- Marks Cursor Agent workspaces as trusted before launching them
 - Supports per-profile environment variables, including forwarding from the host
   environment
 - Installs its provider-agnostic skill bundle with `agent-offload install-skill`

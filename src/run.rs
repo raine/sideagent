@@ -1,4 +1,4 @@
-use crate::config;
+use crate::config::{self, AgentInterface};
 use crate::headless;
 use crate::launcher;
 use crate::prompt;
@@ -7,9 +7,9 @@ use crate::tmux;
 use crate::{ConfigArgs, RunArgs};
 use anyhow::{Context, Result, bail};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn run(args: RunArgs) -> Result<()> {
     let (config, config_path) = config::load_config(args.config.as_deref())?;
@@ -30,6 +30,9 @@ pub fn run(args: RunArgs) -> Result<()> {
     launcher::write_launcher(profile, &run_dir.prompt_file, &run_dir.launcher_file)?;
 
     let cwd = std::env::current_dir().context("could not read current directory")?;
+    if matches!(profile.interface, AgentInterface::Cursor) {
+        trust_cursor_workspace(&cwd)?;
+    }
     let pane_id = tmux::split_window(&run_dir.launcher_file, &cwd)?;
 
     eprintln!("profile: {profile_name}");
@@ -83,5 +86,83 @@ fn wait_for_done(done_file: &Path, pane_id: &str) -> Result<()> {
         }
 
         thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn trust_cursor_workspace(workspace: &Path) -> Result<()> {
+    let data_dir = cursor_data_dir()?;
+    let marker = cursor_trust_marker_path(&data_dir, workspace);
+    if marker.exists() {
+        return Ok(());
+    }
+
+    let parent = marker
+        .parent()
+        .with_context(|| format!("could not resolve parent for {}", marker.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
+
+    let trusted_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before unix epoch")?
+        .as_secs()
+        .to_string();
+    let content = serde_json::json!({
+        "trustedAt": trusted_at,
+        "workspacePath": workspace.display().to_string(),
+    });
+    let data =
+        serde_json::to_vec_pretty(&content).context("could not encode cursor trust marker")?;
+    fs::write(&marker, data).with_context(|| format!("could not write {}", marker.display()))?;
+
+    Ok(())
+}
+
+fn cursor_data_dir() -> Result<PathBuf> {
+    if let Ok(path) = std::env::var("CURSOR_DATA_DIR")
+        && !path.trim().is_empty()
+    {
+        return Ok(PathBuf::from(path));
+    }
+
+    Ok(dirs::home_dir()
+        .context("could not find home directory")?
+        .join(".cursor"))
+}
+
+fn cursor_trust_marker_path(data_dir: &Path, workspace: &Path) -> PathBuf {
+    data_dir
+        .join("projects")
+        .join(slug_workspace_path(workspace))
+        .join(".workspace-trusted")
+}
+
+fn slug_workspace_path(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .trim_start_matches(['/', '\\'])
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '-',
+            c => c,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_cursor_trust_marker_path_uses_cursor_project_slug() {
+        let data_dir = PathBuf::from("/tmp/home/.cursor");
+        let workspace = PathBuf::from("/Users/raine/code/agent-offload__worktrees/project-configs");
+
+        assert_eq!(
+            cursor_trust_marker_path(&data_dir, &workspace),
+            PathBuf::from(
+                "/tmp/home/.cursor/projects/Users-raine-code-agent-offload__worktrees-project-configs/.workspace-trusted"
+            )
+        );
     }
 }

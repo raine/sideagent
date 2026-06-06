@@ -4,6 +4,7 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use std::path::PathBuf;
 
 mod config;
+mod install_skill;
 mod launcher;
 mod prompt;
 mod run;
@@ -36,6 +37,9 @@ enum Commands {
 
     /// List configured profiles.
     Profiles(ConfigArgs),
+
+    /// Install the bundled Claude Code skill.
+    InstallSkill,
 }
 
 #[derive(clap::Args)]
@@ -66,6 +70,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Run(args)) => run::run(args),
         Some(Commands::Profiles(args)) => run::profiles(args),
+        Some(Commands::InstallSkill) => install_skill::run(),
         None => run::run(cli.run),
     }
 }

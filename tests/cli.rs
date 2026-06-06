@@ -12,7 +12,21 @@ fn test_bare_cli_prompts_help() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("agent-offload"));
     assert!(stdout.contains("profiles"));
+    assert!(stdout.contains("install-skill"));
     assert!(stdout.contains("prompt"));
+}
+
+#[test]
+fn test_install_skill_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_agent-offload"))
+        .arg("install-skill")
+        .arg("--help")
+        .output()
+        .expect("failed to run agent-offload install-skill --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Install the bundled Claude Code skill"));
 }
 
 #[test]

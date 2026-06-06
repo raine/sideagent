@@ -3,8 +3,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#configuration">Configuration</a> ·
-  <a href="#commands">Commands</a> ·
-  <a href="#development">Development</a>
+  <a href="#commands">Commands</a>
 </p>
 
 `agent-offload` launches another coding agent in a nearby tmux pane, hands it a
@@ -14,19 +13,24 @@ conversation in control of review, verification, and final reporting.
 
 ## Why?
 
-Agent CLIs are good at working in parallel, but handing work to them manually is
-awkward. You have to open a pane, paste the prompt, remember what it is doing,
-and notice when it finishes.
+Sometimes you already have a thorough Markdown plan, and implementing it with a
+heavy, slow model is overkill. The host agent should be able to hand that work
+to a cheaper and faster model directly, without user manually starting a new
+Codex, OpenCode, or other agent session.
 
-`agent-offload` turns that into one blocking command:
+Claude Code can delegate to subagents, but that keeps delegation inside Claude's
+own harness and model choices. Other agent harnesses have their own delegation
+mechanisms, assumptions, and model support. For example, you might be inside
+Claude Code with a plan ready to implement, but want Codex Spark or a DeepSeek V4
+backed agent to do the edit. The host agent should be able to start that run,
+pass the plan, wait for completion, and review the result without asking the user
+to open and manage a separate session.
 
-```bash
-cat history/2026-06-06-plan-install-skill-command.md | agent-offload run --profile codex-spark
-```
-
-It creates a run directory, writes the prompt to disk, generates a small launcher
-script for the configured agent, opens it in tmux, waits for `done.md`, kills the
-pane, and prints the delegated agent's summary.
+`agent-offload` makes offloading harness agnostic by using process execution as
+the boundary. The host agent runs one blocking command, the delegated task opens
+in a new tmux pane or runs headlessly, and the host agent waits until the task
+finishes. Then the host agent can inspect the diff, run checks, and continue the
+review in the original conversation.
 
 ## What it does
 

@@ -60,9 +60,10 @@ pub fn write_launcher(profile: &Profile, prompt_file: &Path, launcher_file: &Pat
 
 fn interface_prompt_args(interface: AgentInterface) -> &'static [&'static str] {
     match interface {
-        AgentInterface::Generic | AgentInterface::Claude | AgentInterface::Codex => {
-            &["--", "\"$PROMPT_CONTENT\""]
-        }
+        AgentInterface::Generic
+        | AgentInterface::Claude
+        | AgentInterface::Codex
+        | AgentInterface::Cursor => &["--", "\"$PROMPT_CONTENT\""],
         AgentInterface::Opencode => &["--prompt", "\"$PROMPT_CONTENT\""],
     }
 }
@@ -101,6 +102,20 @@ mod tests {
         let script = fs::read_to_string(&launcher_file).unwrap();
         assert!(script.contains("PROMPT_CONTENT=$(cat \"$PROMPT_FILE\")"));
         assert!(script.contains("exec 'claude'"));
+        assert!(script.contains("-- \"$PROMPT_CONTENT\""));
+    }
+
+    #[test]
+    fn test_launcher_cursor_interface() {
+        let dir = TempDir::new().unwrap();
+        let prompt_file = dir.path().join("prompt.md");
+        let launcher_file = dir.path().join("launch.sh");
+
+        let profile = test_profile("cursor-agent", AgentInterface::Cursor);
+        write_launcher(&profile, &prompt_file, &launcher_file).unwrap();
+
+        let script = fs::read_to_string(&launcher_file).unwrap();
+        assert!(script.contains("exec 'cursor-agent'"));
         assert!(script.contains("-- \"$PROMPT_CONTENT\""));
     }
 

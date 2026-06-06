@@ -160,6 +160,17 @@ profiles:
       CLAUDE_CODE_EFFORT_LEVEL: max
       CLAUDE_CODE_ENABLE_TELEMETRY: '0'
     prompt: argument
+
+  cursor-composer:
+    command: /Users/raine/.local/bin/cursor-agent
+    interface: cursor
+    args:
+      - --print
+      - --trust
+      - --model
+      - composer-2.5-fast
+    env: {}
+    prompt: argument
 ```
 
 ### Profile fields
@@ -180,6 +191,7 @@ profiles:
 | `generic`  | `-- "$PROMPT_CONTENT"`       |
 | `claude`   | `-- "$PROMPT_CONTENT"`       |
 | `codex`    | `-- "$PROMPT_CONTENT"`       |
+| `cursor`   | `-- "$PROMPT_CONTENT"`       |
 | `opencode` | `--prompt "$PROMPT_CONTENT"` |
 
 ### Prompt delivery

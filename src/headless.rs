@@ -79,6 +79,7 @@ pub fn run_headless(profile: &Profile, prompt: &str) -> Result<i32> {
 fn interface_headless_flags(interface: AgentInterface) -> &'static [&'static str] {
     match interface {
         AgentInterface::Claude => &["-p"],
+        AgentInterface::Cursor => &["-p"],
         AgentInterface::Codex => &["exec"],
         AgentInterface::Opencode => &["run"],
         AgentInterface::Generic => &[],
@@ -107,5 +108,10 @@ mod tests {
     #[test]
     fn test_generic_headless_flags() {
         assert!(interface_headless_flags(AgentInterface::Generic).is_empty());
+    }
+
+    #[test]
+    fn test_cursor_headless_flags() {
+        assert_eq!(interface_headless_flags(AgentInterface::Cursor), &["-p"]);
     }
 }

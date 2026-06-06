@@ -49,6 +49,7 @@ pub enum AgentInterface {
     Generic,
     Claude,
     Codex,
+    Cursor,
     Opencode,
 }
 

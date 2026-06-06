@@ -3,16 +3,25 @@ use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
 pub fn load_prompt(args: &[String]) -> Result<String> {
+    let stdin = io::stdin();
+    load_prompt_from(args, stdin.is_terminal(), stdin.lock())
+}
+
+fn load_prompt_from(
+    args: &[String],
+    stdin_is_terminal: bool,
+    mut stdin: impl Read,
+) -> Result<String> {
     if !args.is_empty() {
         return Ok(args.join(" "));
     }
 
-    if io::stdin().is_terminal() {
+    if stdin_is_terminal {
         bail!("provide a prompt argument or pipe prompt text on stdin");
     }
 
     let mut prompt = String::new();
-    io::stdin()
+    stdin
         .read_to_string(&mut prompt)
         .context("could not read prompt from stdin")?;
 
@@ -71,9 +80,22 @@ mod tests {
 
     #[test]
     fn test_load_prompt_empty_args_fails_when_terminal() {
-        // This would bail on is_terminal() - unit-test the terminal path separately
         let args: Vec<String> = vec![];
-        let result = load_prompt(&args);
+        let result = load_prompt_from(&args, true, io::empty());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_prompt_from_stdin() {
+        let args: Vec<String> = vec![];
+        let result = load_prompt_from(&args, false, " implement feature\n".as_bytes()).unwrap();
+        assert_eq!(result, "implement feature");
+    }
+
+    #[test]
+    fn test_load_prompt_empty_stdin_fails() {
+        let args: Vec<String> = vec![];
+        let result = load_prompt_from(&args, false, io::empty());
         assert!(result.is_err());
     }
 }

@@ -131,15 +131,25 @@ fn cursor_trust_marker_path(data_dir: &Path, workspace: &Path) -> PathBuf {
 }
 
 fn slug_workspace_path(path: &Path) -> String {
-    path.display()
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+
+    for c in path
+        .display()
         .to_string()
         .trim_start_matches(['/', '\\'])
         .chars()
-        .map(|c| match c {
-            '/' | '\\' => '-',
-            c => c,
-        })
-        .collect()
+    {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+            last_was_separator = false;
+        } else if !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    slug.trim_end_matches('-').to_string()
 }
 
 #[cfg(test)]
@@ -155,7 +165,7 @@ mod tests {
         assert_eq!(
             cursor_trust_marker_path(&data_dir, &workspace),
             PathBuf::from(
-                "/tmp/home/.cursor/projects/Users-raine-code-sideagent__worktrees-project-configs/.workspace-trusted"
+                "/tmp/home/.cursor/projects/Users-raine-code-sideagent-worktrees-project-configs/.workspace-trusted"
             )
         );
     }

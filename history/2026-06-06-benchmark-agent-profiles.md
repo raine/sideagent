@@ -2,13 +2,14 @@
 
 ## Summary
 
-`composer-2.5-fast` remains the winner by the host rubric after adding `gpt-5.4-mini`. It had the best median host score, the fastest median time, and the most consistent host-reviewed results. `gpt-5.4-mini` passed `just check` in all three trials, but the host acceptance script recorded critical failures in every trial and the model was the slowest result in this report. Its consult scores were also highly polarized, with DeepSeek much more favorable than `gpt-5.5` and Gemini.
+`composer-2.5-fast` remains the winner by the host rubric after adding `gpt-5.4-mini` and `gpt-5.5` low effort Codex runs. It still had the best median host score, the fastest median time, and the most consistent host-reviewed results. Both added Codex profiles passed `just check` in all three trials, but the host acceptance script recorded critical failures in every added trial. `gpt-5.5` low effort was faster and more consistent than `gpt-5.4-mini`, but it still had zero acceptance successes.
 
 | Model                   | Median elapsed time | Success | Median host score | Consult range | Notes                                              |
 | ----------------------- | ------------------: | ------: | ----------------: | ------------: | -------------------------------------------------- |
 | `composer-2.5-fast`     |            2m 1.16s |     3/3 |                88 |         68-90 | Best median quality, fastest, most consistent      |
 | `gpt-5.3-codex-spark`   |           2m 58.32s |     3/3 |                82 |         64-95 | Strong peak result, higher variance                |
 | `deepseek-v4-flash[1m]` |           6m 29.23s |     3/3 |                76 |         61-88 | Reliable completion, slower, lower median quality  |
+| `gpt-5.5`               |           6m 43.33s |     0/3 |                66 |         52-98 | Low effort Codex, failed acceptance, polarized     |
 | `gpt-5.4-mini`          |           7m 49.72s |     0/3 |                62 |         42-96 | Passed checks, failed acceptance, widest spread    |
 
 ## Setup
@@ -23,6 +24,7 @@
   - `deepseek-v4-flash[1m]`, profile `claude-deepseek-flash`
   - `composer-2.5-fast`, profile `cursor-composer-fast`
   - `gpt-5.4-mini`, profile `codex-mini`
+  - `gpt-5.5`, profile `codex-gpt-5.5-low`
 - Trials per model: 3
 - Isolation: unique clone, `TMPDIR`, and `CARGO_TARGET_DIR` per trial. Codex and Claude trials also used unique `HOME`; Cursor trials used the real user `HOME` for authentication.
 - Warmup: `cargo fetch` and `cargo build --all` before each timed agent run
@@ -48,6 +50,9 @@ Implement run archives for `sideagent`: metadata, JSONL event capture, raw stdou
 | `gpt-5.4-mini`          | codex-mini            |     1 | 7m 49.72s | pass       | fail       |         62 |         42-60 | `bench/codex-mini-trial-1`            |
 | `gpt-5.4-mini`          | codex-mini            |     2 | 8m 44.44s | pass       | fail       |         78 |         58-96 | `bench/codex-mini-trial-2`            |
 | `gpt-5.4-mini`          | codex-mini            |     3 | 7m 21.64s | pass       | fail       |         45 |         58-92 | `bench/codex-mini-trial-3`            |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     1 | 6m 42.70s | pass       | fail       |         65 |         54-75 | `bench/codex-gpt-5.5-low-trial-1`    |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     2 | 6m 49.17s | pass       | fail       |         68 |         58-98 | `bench/codex-gpt-5.5-low-trial-2`    |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     3 | 6m 43.33s | pass       | fail       |         66 |         52-94 | `bench/codex-gpt-5.5-low-trial-3`    |
 
 ## Consult Scores
 
@@ -65,6 +70,9 @@ Implement run archives for `sideagent`: metadata, JSONL event capture, raw stdou
 | `gpt-5.4-mini`          | codex-mini            |     1 |         62 |                       60 |        42 |                52 |
 | `gpt-5.4-mini`          | codex-mini            |     2 |         78 |                       80 |        58 |                92 |
 | `gpt-5.4-mini`          | codex-mini            |     3 |         45 |                       62 |        58 |                96 |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     1 |         65 |                       75 |        54 |               n/a |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     2 |         68 |                       98 |        58 |               n/a |
+| `gpt-5.5`               | codex-gpt-5.5-low    |     3 |         66 |                       94 |        52 |               n/a |
 
 ## Results
 
@@ -445,25 +453,129 @@ trial 3:
 - `gemini-3.1-pro-preview`: scored trials 60, 80, and 62. It liked the architecture more than `gpt-5.5`, especially trial 2, but still called out missing or failing CLI behavior, XDG/state-directory handling, unbounded `show` reads, and tmux pane capture risks.
 - `deepseek-v4-pro`: scored trials 52, 92, and 96. It was much more forgiving of the acceptance failures, treating some as likely host-script or environment issues, and emphasized the modular architecture and passing tests. The host score does not follow that optimism because the recorded acceptance outputs had critical failures.
 
+### `gpt-5.5`
+
+`gpt-5.5` through the low effort Codex profile was faster and more consistent than `gpt-5.4-mini`, but it still failed the host acceptance checklist in all three trials. Each trial passed host `just check` and produced a broad archive implementation with tests and README updates. The gap was end-to-end behavior: the fake Cursor artifact check failed, then `show` checks failed because the expected run archive was not found. Reviewers again split sharply, with Gemini viewing the implementation as close to complete and `gpt-5.5` review treating the acceptance failures and lifecycle hazards as score-capping.
+
+- Profile: `codex-gpt-5.5-low`
+- Median time: 6m 43.33s
+- Success count: 0/3
+- Median host score: 66
+- Branches:
+  - `bench/codex-gpt-5.5-low-trial-1`
+  - `bench/codex-gpt-5.5-low-trial-2`
+  - `bench/codex-gpt-5.5-low-trial-3`
+- Diffs:
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-1.diff`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-2.diff`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-3.diff`
+- Check outputs:
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-1-check.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-2-check.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-3-check.txt`
+- Acceptance outputs:
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-1-acceptance.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-2-acceptance.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-3-acceptance.txt`
+- Timing outputs:
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-1-time.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-2-time.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-3-time.txt`
+- `consult-llm` outputs:
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-1-consult.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-2-consult.txt`
+  - `/tmp/sideagent-bench-codex-gpt-5.5-low-trial-3-consult.txt`
+- Strengths: all trials passed `just check`, all added README and integration-test coverage, and the three diffs were structurally consistent with clear archive, parser, and recorder modules
+- Issues: every acceptance output recorded fake Cursor artifact and `show` failures, and reviewers flagged hardcoded state-directory behavior, whole-file `show` reads, child or tmux cleanup risks, narrow parser coverage, and tee or recorder error propagation gaps
+- Safe and maintainable diff: reasonable prototype structure, but not merge-ready because the acceptance workflow failed and lifecycle or bounded-read concerns remained in every trial
+
+Per-trial diff stats:
+
+```text
+trial 1:
+ Cargo.lock              | 253 +++++++++++++++++++++++++++++++++++++++
+ Cargo.toml              |   1 +
+ README.md               |  47 ++++++--
+ src/config.rs           |   4 +-
+ src/events.rs           | 128 ++++++++++++++++++++
+ src/headless.rs         | 199 ++++++++++++++++++++++++-------
+ src/main.rs             |  36 ++++++
+ src/parsers/codex.rs    | 127 ++++++++++++++++++++
+ src/parsers/cursor.rs   | 204 ++++++++++++++++++++++++++++++++
+ src/parsers/mod.rs      |  22 ++++
+ src/parsers/opencode.rs |   5 +
+ src/run.rs              | 130 +++++++++++++++++++-
+ src/run_archive.rs      | 309 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/run_dir.rs          | 110 ++++++++++++++---
+ src/tmux.rs             |  21 ++++
+ tests/cli.rs            | 188 +++++++++++++++++++++++++++++
+ 16 files changed, 1714 insertions(+), 70 deletions(-)
+
+trial 2:
+ Cargo.lock              | 253 +++++++++++++++++++++++++++++++++++++++
+ Cargo.toml              |   1 +
+ README.md               |  49 ++++++--
+ src/config.rs           |   4 +-
+ src/events.rs           | 128 ++++++++++++++++++++
+ src/headless.rs         | 213 +++++++++++++++++++++++++--------
+ src/main.rs             |  28 +++++
+ src/parsers/codex.rs    | 120 +++++++++++++++++++
+ src/parsers/cursor.rs   | 202 +++++++++++++++++++++++++++++++
+ src/parsers/mod.rs      |  22 ++++
+ src/parsers/opencode.rs |   5 +
+ src/run.rs              | 123 ++++++++++++++++++-
+ src/run_archive.rs      | 307 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/run_dir.rs          | 109 ++++++++++++++---
+ src/tmux.rs             |  21 ++++
+ tests/cli.rs            | 171 +++++++++++++++++++++++++++
+ 16 files changed, 1682 insertions(+), 74 deletions(-)
+
+trial 3:
+ Cargo.lock              | 253 +++++++++++++++++++++++++++++++++++++++
+ Cargo.toml              |   1 +
+ README.md               |  48 ++++++--
+ src/config.rs           |   4 +-
+ src/events.rs           | 128 ++++++++++++++++++++
+ src/headless.rs         | 198 ++++++++++++++++++++++++-------
+ src/main.rs             |  35 ++++++
+ src/parsers/codex.rs    | 149 +++++++++++++++++++++++
+ src/parsers/cursor.rs   | 222 ++++++++++++++++++++++++++++++++++
+ src/parsers/mod.rs      |  22 ++++
+ src/parsers/opencode.rs |   5 +
+ src/run.rs              | 125 +++++++++++++++++++-
+ src/run_archive.rs      | 307 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/run_dir.rs          | 110 ++++++++++++++---
+ src/tmux.rs             |  21 ++++
+ tests/cli.rs            | 180 ++++++++++++++++++++++++++++
+ 16 files changed, 1740 insertions(+), 68 deletions(-)
+```
+
+`consult-llm` analysis:
+
+- `gpt-5.5`: scored trials 54, 58, and 52. It capped scores because the fake Cursor archive and `show` acceptance checks failed, and it repeatedly flagged cleanup leaks, whole-file reads, hardcoded archive roots, narrow parsers, and tee or recorder error masking.
+- `gemini-3.1-pro-preview`: scored trials 75, 98, and 94. It liked the architecture, tests, parser modules, and recorder design much more, but still called out XDG/state-directory behavior, child process leaks, unbounded reads, and JSON path shape issues. This was the widest reviewer disagreement for an added model.
+
 ## Methodology limitations
 
 - This was a manual benchmark, not an automated harness. The host followed the same procedure for each trial, but manual scripting can still introduce incidental differences.
 - Trial clones were retained until consult review so reviewers could inspect final source context. They can be removed after this report is no longer needed.
 - The external acceptance checklist was implemented as a host script. It produced pass evidence and `accept_rc=0`, but it was not a dedicated, versioned test harness. The rerun `gpt-5.5` reviews treated some acceptance evidence as lower-confidence than the host score did.
 - The first `gpt-5.5` consult attempt succeeded for trial 1 only. After Max Mode was enabled, the missing trial 2 and trial 3 `gpt-5.5` reviews were rerun successfully and added to this report.
-- The `gpt-5.4-mini` addendum was run later from the renamed repository path, `/Users/raine/code/agent-offload`, at base commit `5501a3098907f4c9f167b539eff7566e7e6846cd`. The earlier rows used base commit `5e7f57fdda7fd00a8f458e65d578fff939245870`.
+- The `gpt-5.4-mini` and `gpt-5.5` low effort addenda were run later from the renamed repository path, `/Users/raine/code/agent-offload`, at base commit `5501a3098907f4c9f167b539eff7566e7e6846cd`. The earlier rows used base commit `5e7f57fdda7fd00a8f458e65d578fff939245870`.
+- `deepseek-v4-pro` was available for the `gpt-5.4-mini` consult addendum but not for the later `gpt-5.5` low effort consult run, so those consult cells are marked `n/a`.
 - Consult scores judge final result quality only. Host scores are used for ranking. The full consult set is notably more skeptical than the host scores, mostly because it weighs parser fidelity, bounded reads, cleanup paths, and missing runtime evidence more heavily.
 - Timing includes only the delegated implementation run, not host verification, consult review, artifact capture, or reporting.
 - The models were asked to implement a detailed existing plan, so this benchmark measures execution of a specific task shape more than open-ended architecture skill.
 
 ## Winner
 
-`composer-2.5-fast` wins by the host scoring rubric. It had the highest median host score, all three trials succeeded, and it had the fastest median elapsed time. Adding `gpt-5.4-mini` did not change the winner because `gpt-5.4-mini` had the slowest median time, a lower median host score, and zero acceptance successes. The full consult set still makes the race look less clean than host scores alone, especially because DeepSeek was much more optimistic about `gpt-5.4-mini` trial 2 and trial 3 than the host acceptance evidence supports.
+`composer-2.5-fast` wins by the host scoring rubric. It had the highest median host score, all three trials succeeded, and it had the fastest median elapsed time. Adding `gpt-5.4-mini` and `gpt-5.5` low effort did not change the winner because both added Codex profiles had zero acceptance successes and lower median host scores. `gpt-5.5` low effort was faster than `gpt-5.4-mini`, but it did not close the end-to-end acceptance gap.
 
 ## Takeaways
 
 - `composer-2.5-fast`: fast and steady, and still the best host-ranked choice after the harsher consult rerun.
 - `gpt-5.3-codex-spark`: capable of a high-scoring host result, but consult disagreement says to review its best-looking diffs carefully.
 - `deepseek-v4-flash[1m]`: dependable completion, but bring snacks and expect more cleanup review.
+- `gpt-5.5` low effort: faster than mini and architecturally tidy, but still stuck on the same acceptance cliff.
 - `gpt-5.4-mini`: it can build a lot of scaffolding, but this run needed more end-to-end discipline before the CLI contract was trustworthy.
 - All successful agents found the broad shape of the feature. The hard part was not adding artifacts, it was cleaning up failure paths, parsing real stream formats, and avoiding sneaky large-file reads.

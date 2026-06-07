@@ -3,39 +3,25 @@
 Use `sideagent` when implementation work can be delegated to a configured
 coding agent running in a nearby tmux pane.
 
-## Profiles
-
-Configured profiles available in this environment:
-
-```
-!`sideagent profiles`
-```
-
-Use the default profile unless the user asks for a specific one or the task
-clearly needs a named profile.
-
 ## Delegate work
+
+Omitting `--profile` uses the default profile from the config.
 
 For short prompts:
 
 ```sh
-sideagent --profile <name> "implement the requested change"
+sideagent "implement the requested change"
 ```
 
 For long prompts or markdown plans:
 
 ```sh
-cat path/to/plan.md | sideagent --profile <name>
+cat path/to/plan.md | sideagent
 ```
 
 The command blocks until the delegated agent writes its done file. When it
 returns, read the short summary printed by `sideagent`, inspect the working
 tree, and verify the result before reporting success.
-
-## Profile configuration
-
-A profile can point at a custom binary and declare the agent interface it
-follows. For example, a `claude-deepseek` binary can use `interface: claude`.
 
 ## Prompt guidance
 

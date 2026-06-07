@@ -34,16 +34,11 @@ the review in the original conversation.
 
 ## What it does
 
-- Launches configured agent profiles in tmux or in headless mode
-- Sends prompts as an argument, stdin, or a prompt-file argument
-- Adds completion-file instructions to tmux delegated prompts
-- Waits for headless agents to exit, or for tmux agents to publish `done.md`
-- Detects if the tmux pane exits before completion
-- Kills the delegated pane after `done.md` appears
-- Marks Cursor Agent workspaces as trusted before launching them
-- Supports per-profile environment variables, including forwarding from the host
-  environment
-- Installs its provider-agnostic skill bundle with `agent-offload install-skill`
+- Launches configured agent profiles in tmux or headless mode
+- Passes prompts using the format each agent CLI expects
+- Waits for completion and returns the delegated agent's summary
+- Supports per-profile arguments and environment variables
+- Installs a provider-agnostic `/agent-offload` skill bundle
 
 ## Quick start
 

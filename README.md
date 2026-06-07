@@ -7,7 +7,7 @@
 </p>
 
 `agent-offload` launches another coding agent and blocks until that agent
-finishes. Use it when your main agent wants to delegate implementation work
+completes. Use it when your main agent wants to delegate implementation work
 while keeping the current conversation in control of review, verification, and
 final reporting.
 
@@ -29,17 +29,17 @@ to open and manage a separate session.
 `agent-offload` makes offloading harness agnostic by using process execution as
 the boundary. The host agent runs one blocking command, the delegated task opens
 in a new tmux pane or runs headlessly, and the host agent waits until the task
-finishes. Then the host agent can inspect the diff, run checks, and continue the
-review in the original conversation.
+completes. Then the host agent can inspect the diff, run checks, and continue
+the review in the original conversation.
 
 ## What it does
 
 - Launches configured agent profiles in tmux or in headless mode
 - Sends prompts as an argument, stdin, or a prompt-file argument
 - Adds completion-file instructions to tmux delegated prompts
-- Waits until the delegated agent exits or publishes `done.md`
+- Waits for headless agents to exit, or for tmux agents to publish `done.md`
 - Detects if the tmux pane exits before completion
-- Kills the delegated pane after completion
+- Kills the delegated pane after `done.md` appears
 - Marks Cursor Agent workspaces as trusted before launching them
 - Supports per-profile environment variables, including forwarding from the host
   environment
@@ -83,7 +83,12 @@ See [Configuration](#configuration) for an example.
 agent-offload install-skill
 ```
 
-This writes:
+Without `--provider`, this installs to every detected provider config
+directory. A provider is detected when its config directory already exists. Use
+`--provider` to install for one provider even if its config directory has not
+been created yet.
+
+Default install paths are:
 
 ```text
 ~/.claude/skills/agent-offload/SKILL.md
@@ -108,7 +113,7 @@ reports the result in the current conversation.
 
 ## How it works
 
-Each run gets a directory under:
+Tmux runs get a directory under:
 
 ```text
 ~/.local/state/agent-offload/runs/
@@ -124,8 +129,13 @@ The run directory contains:
 
 In tmux mode, `agent-offload` appends instructions to the prompt telling the
 delegated agent to write a concise summary to `done.md.tmp`, then atomically
-rename it to `done.md`. The parent process waits for `done.md` to exist. If the
-tmux pane closes first, the run fails instead of hanging silently.
+rename it to `done.md`. The parent process waits for `done.md` to exist, then
+kills the delegated pane. If the tmux pane closes first, the run fails instead
+of hanging silently.
+
+Headless runs execute the configured command in the current terminal and return
+its exit status. Headless `prompt-file-arg` runs create a run directory for the
+prompt file; headless `argument` and `stdin` runs do not.
 
 The delegated pane opens to the right of the tmux pane that runs
 `agent-offload`, even if another tmux client is viewing a different window.
@@ -146,11 +156,13 @@ merged. Project discovery stops after checking your home directory.
 Project configs can contain commands and environment variables. Do not commit
 secrets in `.agent-offload.yaml`. Use `from_env` instead.
 
-A config has a default profile and one or more named profiles. This example
-uses Codex Spark and a DeepSeek-backed Claude Code profile:
+A config has a default profile and one or more named profiles. Top-level
+`headless: true` runs every profile without tmux. This example uses Codex Spark
+and a DeepSeek-backed Claude Code profile:
 
 ```yaml
 default_profile: claude-deepseek-flash
+headless: false
 
 profiles:
   codex-spark:
@@ -196,16 +208,27 @@ profiles:
     env: {}
 ```
 
+### Config fields
+
+| Field             | Description                              | Default  |
+| ----------------- | ---------------------------------------- | -------- |
+| `default_profile` | Profile used when `--profile` is omitted | Required |
+| `headless`        | Run every profile without tmux           | `false`  |
+| `profiles`        | Named profile map                        | Required |
+
+Headless mode is enabled when `--headless`, top-level `headless`, or
+profile-level `headless` is true.
+
 ### Profile fields
 
-| Field       | Description                                  |
-| ----------- | -------------------------------------------- |
-| `command`   | Binary or script to execute                  |
-| `interface` | Argument shape for the agent CLI             |
-| `args`      | Extra arguments passed before the prompt     |
-| `env`       | Environment variables exported before launch |
-| `prompt`    | How the augmented prompt is delivered        |
-| `headless`  | Whether to run this profile without tmux     |
+| Field       | Description                                  | Default    |
+| ----------- | -------------------------------------------- | ---------- |
+| `command`   | Binary or script to execute                  | Required   |
+| `interface` | Argument shape for the agent CLI             | `generic`  |
+| `args`      | Extra arguments passed before the prompt     | `[]`       |
+| `env`       | Environment variables exported before launch | `{}`       |
+| `prompt`    | How the augmented prompt is delivered        | `argument` |
+| `headless`  | Whether to run this profile without tmux     | `false`    |
 
 ### Interfaces
 
@@ -253,14 +276,14 @@ Environment variable names must be valid shell identifiers.
 Launch a profile with a prompt and wait for completion.
 
 ```bash
-agent-offload run --profile claude "fix the failing tests"
+agent-offload run --profile claude-deepseek-flash "fix the failing tests"
 cat history/plan.md | agent-offload run --profile codex-spark
 ```
 
 The `run` subcommand is optional, so this is equivalent:
 
 ```bash
-agent-offload --profile claude "fix the failing tests"
+agent-offload --profile claude-deepseek-flash "fix the failing tests"
 ```
 
 Options:
@@ -292,6 +315,18 @@ agent-offload install-skill
 agent-offload install-skill --provider claude
 ```
 
+Without `--provider`, the command installs to detected provider config
+directories. A provider is detected when its config directory already exists. If
+no provider config directories are found, the command exits with an error and
+lists the checked paths.
+
+With `--provider`, the command installs only for that provider and creates the
+skill directory as needed.
+
+The default Claude Code install root is `~/.claude`, or `CLAUDE_CONFIG_DIR` when
+that variable is set. The default Pi install root is `~/.pi/agent`, or
+`PI_CODING_AGENT_DIR` when that variable is set.
+
 The command is idempotent. It prints `up-to-date` when the installed skill
 matches the bundled copy.
 
@@ -316,8 +351,11 @@ inspect the diff, verify behavior, and decide what to report or commit.
 ## Requirements
 
 - Rust, for building from source
-- tmux
 - At least one configured agent CLI
+- tmux, for non-headless runs
+
+Non-headless runs must be started from inside an existing tmux pane. Headless
+runs do not require tmux.
 
 ## Development
 

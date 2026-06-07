@@ -32,6 +32,8 @@ in a new tmux pane or runs headlessly, and the host agent waits until the task
 completes. Then the host agent can inspect the diff, run checks, and continue
 the review in the original conversation.
 
+![sideagent opening a delegated implementation run in tmux](meta/sideagent-tmux-delegation-20260607-v2.webp)
+
 ## What it does
 
 - Launches configured agent profiles in tmux or headless mode

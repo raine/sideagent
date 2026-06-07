@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.5 (2026-06-07)
+
+- Project configs are now discovered from `.sideagent.yaml`, and the default user config lives under `~/.config/sideagent`.
+
 ## v0.1.4 (2026-06-06)
 
 - Added project config discovery with `.sideagent.yaml`, so repositories can provide their own profiles without passing `--config`.

@@ -5,7 +5,9 @@ coding agent running in a nearby tmux pane.
 
 ## Delegate work
 
-Omitting `--profile` uses the default profile from the config.
+Omit `--profile` by default. That uses the default profile from the config.
+If the user asks for a specific profile, run `sideagent profiles` to list
+available profiles, then pass `--profile <name>`.
 
 For short prompts:
 

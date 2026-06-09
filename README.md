@@ -357,6 +357,27 @@ Options:
 | `--config <path>`      | Use this config file instead of discovery |
 | `-H, --headless`       | Run this invocation in headless mode      |
 
+### `monitor`
+
+Open a terminal UI for known streaming headless run archives.
+
+```bash
+sideagent monitor
+sideagent monitor --runs-root ~/.local/state/sideagent/runs --poll-interval-ms 500
+```
+
+The monitor reads headless run directories under
+`~/.local/state/sideagent/runs/` by default. It uses `metadata.json` for the run
+list and status, and tails `stdout.jsonl` for the selected run detail pane. Use
+arrow navigation with `Up` and `Down`, or `k` and `j`; press `q` or `Esc` to quit.
+
+Options:
+
+| Option                        | Description                                      |
+| ----------------------------- | ------------------------------------------------ |
+| `--runs-root <path>`          | Read run archives from a custom directory        |
+| `--poll-interval-ms <millis>` | Refresh runs and transcript output at this rate  |
+
 ### `profiles`
 
 List configured profiles and mark the default.

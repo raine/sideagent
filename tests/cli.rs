@@ -23,6 +23,7 @@ fn test_bare_cli_prompts_help() {
     assert!(stdout.contains("profiles"));
     assert!(stdout.contains("install-skill"));
     assert!(stdout.contains("prompt"));
+    assert!(stdout.contains("monitor"));
 }
 
 #[test]
@@ -348,4 +349,71 @@ fn test_headless_generic_prompt_file_arg_writes_prompt_without_stdout_log() {
     assert!(run_dir.join("prompt.md").exists());
     assert!(!run_dir.join("stdout.jsonl").exists());
     assert!(!run_dir.join("metadata.json").exists());
+}
+
+#[test]
+fn test_monitor_help_documents_tui_options() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
+        .arg("monitor")
+        .arg("--help")
+        .output()
+        .expect("failed to run sideagent monitor --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Monitor headless run archives"));
+    assert!(stdout.contains("--runs-root"));
+    assert!(stdout.contains("--poll-interval-ms"));
+}
+
+#[test]
+fn test_monitor_once_renders_runs_and_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_path = dir.path().join("run-1");
+    fs::create_dir_all(&run_path).unwrap();
+    fs::write(
+        run_path.join("metadata.json"),
+        r#"{"profile":{"name":"demo","command":"agent","args":[]},"interface":"claude","started_at":"2026-06-09T00:00:00Z","status":"running"}"#,
+    )
+    .unwrap();
+    fs::write(
+        run_path.join("stdout.jsonl"),
+        b"{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
+        .arg("monitor")
+        .arg("--runs-root")
+        .arg(dir.path())
+        .arg("--once")
+        .output()
+        .expect("failed to run sideagent monitor --once");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Headless runs"));
+    assert!(stdout.contains("running demo"));
+    assert!(stdout.contains("[text]  hello"));
+}
+
+#[test]
+fn test_monitor_once_empty_runs_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
+        .arg("monitor")
+        .arg("--runs-root")
+        .arg(dir.path())
+        .arg("--once")
+        .output()
+        .expect("failed to run sideagent monitor --once");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Headless runs"));
+    assert!(stdout.contains("No headless run archives found."));
 }

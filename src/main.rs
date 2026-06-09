@@ -38,6 +38,9 @@ enum Commands {
     /// Launch a profile with a prompt and wait for completion.
     Run(RunArgs),
 
+    /// Monitor headless run archives in a terminal UI.
+    Monitor(MonitorArgs),
+
     /// List configured profiles.
     Profiles(ConfigArgs),
 
@@ -78,11 +81,27 @@ struct ConfigArgs {
     config: Option<PathBuf>,
 }
 
+#[derive(clap::Args, Debug, Clone)]
+pub(crate) struct MonitorArgs {
+    /// Read run archives from this directory instead of the default state directory.
+    #[arg(long)]
+    runs_root: Option<PathBuf>,
+
+    /// Poll interval for refreshing runs and transcript output.
+    #[arg(long, default_value_t = 500)]
+    poll_interval_ms: u64,
+
+    /// Render one snapshot to stdout and exit without entering the TUI.
+    #[arg(long, hide = true)]
+    once: bool,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Run(args)) => run::run(args),
+        Some(Commands::Monitor(args)) => monitor::run(args),
         Some(Commands::Profiles(args)) => run::profiles(args),
         Some(Commands::InstallSkill(args)) => install_skill::run(args.provider),
         None => run::run(cli.run),

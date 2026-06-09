@@ -7,10 +7,12 @@ use std::path::PathBuf;
 mod render;
 mod runs;
 mod tail;
+mod tui;
 
 pub(crate) use render::{CompactRenderer, RenderedTail, RendererKind};
 pub(crate) use runs::{RunSummary, poll_runs};
 pub(crate) use tail::{JsonlTailer, TailUpdate};
+pub(crate) use tui::run;
 
 pub(crate) struct MonitorCore {
     runs_root: PathBuf,

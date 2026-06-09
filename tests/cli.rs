@@ -396,8 +396,10 @@ fn test_monitor_once_renders_runs_and_detail() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Headless runs"));
-    assert!(stdout.contains("running demo"));
+    assert!(stdout.contains("sideagent-monitor"));
+    assert!(stdout.contains("Active"));
+    assert!(stdout.contains("Started | Project | Profile | Interface | Mode | Stage | Dur"));
+    assert!(stdout.contains("demo"));
     assert!(stdout.contains("[text]  hello"));
 }
 
@@ -414,6 +416,7 @@ fn test_monitor_once_empty_runs_root() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Headless runs"));
-    assert!(stdout.contains("No headless run archives found."));
+    assert!(stdout.contains("sideagent-monitor"));
+    assert!(stdout.contains("Active"));
+    assert!(stdout.contains("(none)"));
 }

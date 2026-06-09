@@ -366,10 +366,12 @@ sideagent monitor
 sideagent monitor --runs-root ~/.local/state/sideagent/runs --poll-interval-ms 500
 ```
 
-The monitor reads headless run directories under
-`~/.local/state/sideagent/runs/` by default. It uses `metadata.json` for the run
-list and status, and tails `stdout.jsonl` for the selected run detail pane. Use
-arrow navigation with `Up` and `Down`, or `k` and `j`; press `q` or `Esc` to quit.
+The monitor reads run directories under `~/.local/state/sideagent/runs/` by
+default. It uses `metadata.json` for table rows and status, and tails
+`stdout.jsonl` for the selected run detail view. The table view shows Active and
+History sections. Use `Tab` to switch focus, `Up` and `Down` or `k` and `j` to
+navigate, `Enter` to open detail, `Esc` to return from detail, `/` to filter
+history, `?` for help, and `q` to quit.
 
 Options:
 

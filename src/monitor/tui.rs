@@ -1,24 +1,38 @@
 use anyhow::Result;
+use chrono::{DateTime, FixedOffset, Utc};
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::Style,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use super::runs::RunState;
 use super::{MonitorCore, RunSummary};
+
+const TEAL: Color = Color::Rgb(78, 201, 176);
+const WHITE: Color = Color::Rgb(255, 255, 255);
+const DIM_WHITE: Color = Color::Rgb(180, 190, 200);
+const SEPARATOR: Color = Color::Rgb(80, 80, 80);
+const BG: Color = Color::Rgb(18, 18, 22);
+const GREEN: Color = Color::Rgb(120, 200, 120);
+const RED: Color = Color::Rgb(220, 120, 120);
+const YELLOW: Color = Color::Rgb(220, 200, 100);
+const DIM: Color = Color::Rgb(100, 100, 110);
+const SELECTED_BG: Color = Color::Rgb(40, 40, 50);
+const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub(crate) fn run(args: crate::MonitorArgs) -> Result<()> {
     let runs_root = match args.runs_root {
@@ -43,13 +57,39 @@ struct RunTranscript {
     pending_raw: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppMode {
+    Table,
+    Detail,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Active,
+    History,
+}
+
 struct MonitorApp {
     core: MonitorCore,
     poll_interval: Duration,
     runs: Vec<RunSummary>,
-    selected: usize,
+    active_indices: Vec<usize>,
+    history_indices: Vec<usize>,
+    filtered_history_indices: Vec<usize>,
+    focus: Focus,
+    mode: AppMode,
+    active_selected: usize,
+    history_selected: usize,
     selected_run_path: Option<PathBuf>,
+    active_table_state: TableState,
+    history_table_state: TableState,
+    detail_scroll: u16,
     transcripts: HashMap<PathBuf, RunTranscript>,
+    filter_text: String,
+    filter_editing: bool,
+    filter_draft: String,
+    show_help: bool,
+    tick: usize,
 }
 
 impl MonitorApp {
@@ -60,30 +100,94 @@ impl MonitorApp {
             core,
             poll_interval,
             runs: Vec::new(),
-            selected: 0,
+            active_indices: Vec::new(),
+            history_indices: Vec::new(),
+            filtered_history_indices: Vec::new(),
+            focus: Focus::Active,
+            mode: AppMode::Table,
+            active_selected: 0,
+            history_selected: 0,
             selected_run_path: None,
+            active_table_state: TableState::default(),
+            history_table_state: TableState::default(),
+            detail_scroll: 0,
             transcripts: HashMap::new(),
+            filter_text: String::new(),
+            filter_editing: false,
+            filter_draft: String::new(),
+            show_help: false,
+            tick: 0,
         }
     }
 
     fn poll(&mut self) -> Result<()> {
         let previous_selected = self.selected_run_path.clone();
         self.runs = self.core.poll_runs()?;
-        if self.runs.is_empty() {
-            self.selected = 0;
+        self.rebuild_tables(previous_selected.as_ref());
+        self.poll_selected_stdout()?;
+        self.tick = self.tick.wrapping_add(1);
+        Ok(())
+    }
+
+    fn rebuild_tables(&mut self, previous_selected: Option<&PathBuf>) {
+        self.active_indices = self
+            .runs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, run)| (run.state == RunState::Active).then_some(index))
+            .collect();
+        self.history_indices = self
+            .runs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, run)| (run.state != RunState::Active).then_some(index))
+            .collect();
+        self.rebuild_filter();
+
+        self.active_selected = restore_selection(
+            &self.runs,
+            &self.active_indices,
+            previous_selected,
+            self.active_selected,
+        );
+        self.history_selected = restore_selection(
+            &self.runs,
+            &self.filtered_history_indices,
+            previous_selected,
+            self.history_selected,
+        );
+
+        if self.active_indices.is_empty() && self.focus == Focus::Active {
+            self.focus = Focus::History;
+        }
+        if self.filtered_history_indices.is_empty() && self.focus == Focus::History {
+            self.focus = Focus::Active;
+        }
+        self.selected_run_path = self.selected_run().map(|run| run.path.clone());
+    }
+
+    fn rebuild_filter(&mut self) {
+        if self.filter_text.is_empty() {
+            self.filtered_history_indices = self.history_indices.clone();
+            return;
+        }
+        let needle = self.filter_text.to_lowercase();
+        self.filtered_history_indices = self
+            .history_indices
+            .iter()
+            .copied()
+            .filter(|&index| run_matches_filter(&self.runs[index], &needle))
+            .collect();
+    }
+
+    fn poll_selected_stdout(&mut self) -> Result<()> {
+        let Some(run) = self.selected_run().cloned() else {
             self.selected_run_path = None;
             return Ok(());
-        }
-
-        self.selected = previous_selected
-            .as_ref()
-            .and_then(|path| self.runs.iter().position(|run| &run.path == path))
-            .unwrap_or_else(|| self.selected.min(self.runs.len() - 1));
-
-        let selected_run = self.runs[self.selected].clone();
-        self.selected_run_path = Some(selected_run.path.clone());
-        let update = self.core.poll_stdout(&selected_run)?;
-        let transcript = self.transcripts.entry(selected_run.path).or_default();
+        };
+        self.selected_run_path = Some(run.path.clone());
+        let update = self.core.poll_stdout(&run)?;
+        let transcript = self.transcripts.entry(run.path).or_default();
         for line in update.lines {
             if transcript.lines.len() == Self::MAX_TRANSCRIPT_LINES {
                 transcript.lines.pop_front();
@@ -94,34 +198,130 @@ impl MonitorApp {
         Ok(())
     }
 
-    fn set_selected(&mut self, selected: usize) {
-        self.selected = if self.runs.is_empty() {
-            0
-        } else {
-            selected.min(self.runs.len() - 1)
-        };
-        self.selected_run_path = self.runs.get(self.selected).map(|run| run.path.clone());
+    fn selected_indices(&self) -> &[usize] {
+        match self.focus {
+            Focus::Active => &self.active_indices,
+            Focus::History => &self.filtered_history_indices,
+        }
+    }
+
+    fn selected_position(&self) -> usize {
+        match self.focus {
+            Focus::Active => self.active_selected,
+            Focus::History => self.history_selected,
+        }
+    }
+
+    fn set_selected_position(&mut self, selected: usize) {
+        match self.focus {
+            Focus::Active => {
+                self.active_selected = clamp_selection(selected, self.active_indices.len());
+            }
+            Focus::History => {
+                self.history_selected =
+                    clamp_selection(selected, self.filtered_history_indices.len());
+            }
+        }
+        self.detail_scroll = 0;
+        self.selected_run_path = self.selected_run().map(|run| run.path.clone());
+    }
+
+    fn selected_run(&self) -> Option<&RunSummary> {
+        let index = self
+            .selected_indices()
+            .get(self.selected_position())
+            .copied()?;
+        self.runs.get(index)
     }
 
     fn select_next(&mut self) {
-        if !self.runs.is_empty() {
-            self.set_selected(self.selected + 1);
-        }
+        self.set_selected_position(self.selected_position() + 1);
     }
 
     fn select_previous(&mut self) {
-        self.set_selected(self.selected.saturating_sub(1));
+        self.set_selected_position(self.selected_position().saturating_sub(1));
     }
 
     fn select_first(&mut self) {
-        self.set_selected(0);
+        self.set_selected_position(0);
     }
 
     fn select_last(&mut self) {
-        if !self.runs.is_empty() {
-            self.set_selected(self.runs.len() - 1);
+        let count = self.selected_indices().len();
+        if count > 0 {
+            self.set_selected_position(count - 1);
         }
     }
+
+    fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Active => Focus::History,
+            Focus::History => Focus::Active,
+        };
+        if self.selected_indices().is_empty() {
+            self.focus = match self.focus {
+                Focus::Active => Focus::History,
+                Focus::History => Focus::Active,
+            };
+        }
+        self.selected_run_path = self.selected_run().map(|run| run.path.clone());
+    }
+
+    fn start_filter(&mut self) {
+        self.filter_editing = true;
+        self.filter_draft = self.filter_text.clone();
+        self.focus = Focus::History;
+    }
+
+    fn accept_filter(&mut self) {
+        self.filter_text.clone_from(&self.filter_draft);
+        self.filter_editing = false;
+        self.rebuild_filter();
+        self.history_selected =
+            clamp_selection(self.history_selected, self.filtered_history_indices.len());
+        self.selected_run_path = self.selected_run().map(|run| run.path.clone());
+    }
+
+    fn cancel_filter(&mut self) {
+        self.filter_editing = false;
+        self.filter_draft.clear();
+    }
+}
+
+fn restore_selection(
+    runs: &[RunSummary],
+    indices: &[usize],
+    previous_selected: Option<&PathBuf>,
+    fallback: usize,
+) -> usize {
+    if indices.is_empty() {
+        return 0;
+    }
+    previous_selected
+        .and_then(|path| indices.iter().position(|&index| &runs[index].path == path))
+        .unwrap_or_else(|| fallback.min(indices.len() - 1))
+}
+
+fn clamp_selection(selected: usize, len: usize) -> usize {
+    if len == 0 { 0 } else { selected.min(len - 1) }
+}
+
+fn run_matches_filter(run: &RunSummary, needle: &str) -> bool {
+    let haystacks = [
+        Some(run.id.as_str()),
+        run.profile_name.as_deref(),
+        run.profile_command.as_deref(),
+        run.interface.as_deref(),
+        run.prompt_delivery.as_deref(),
+        run.started_at.as_deref(),
+        run.completed_at.as_deref(),
+        run.failure.as_deref(),
+    ];
+    haystacks
+        .into_iter()
+        .flatten()
+        .any(|value| value.to_lowercase().contains(needle))
+        || state_label(run.state).contains(needle)
 }
 
 fn cleanup_terminal_startup<W: io::Write>(writer: &mut W, alternate_screen_entered: bool) {
@@ -169,24 +369,91 @@ impl Drop for TerminalGuard {
 fn run_tui(mut app: MonitorApp) -> Result<()> {
     let mut guard = TerminalGuard::enter()?;
     loop {
-        guard.terminal.draw(|frame| draw(frame, &app))?;
+        guard.terminal.draw(|frame| draw(frame, &mut app))?;
 
         if event::poll(app.poll_interval)?
             && let Event::Key(key) = event::read()?
+            && handle_key(&mut app, key)
         {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Down | KeyCode::Char('j') => app.select_next(),
-                KeyCode::Up | KeyCode::Char('k') => app.select_previous(),
-                KeyCode::Home | KeyCode::Char('g') => app.select_first(),
-                KeyCode::End | KeyCode::Char('G') => app.select_last(),
-                _ => {}
-            }
+            break;
         }
 
         app.poll()?;
     }
     Ok(())
+}
+
+fn handle_key(app: &mut MonitorApp, key: KeyEvent) -> bool {
+    if app.show_help {
+        match key.code {
+            KeyCode::Char('?') | KeyCode::Esc => app.show_help = false,
+            _ => {}
+        }
+        return false;
+    }
+
+    if app.filter_editing {
+        match key.code {
+            KeyCode::Enter => app.accept_filter(),
+            KeyCode::Esc => app.cancel_filter(),
+            KeyCode::Backspace => {
+                app.filter_draft.pop();
+            }
+            KeyCode::Char(c) => app.filter_draft.push(c),
+            _ => {}
+        }
+        return false;
+    }
+
+    match app.mode {
+        AppMode::Table => handle_table_key(app, key),
+        AppMode::Detail => handle_detail_key(app, key),
+    }
+}
+
+fn handle_table_key(app: &mut MonitorApp, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => return true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
+        KeyCode::Char('?') => app.show_help = true,
+        KeyCode::Tab | KeyCode::BackTab => app.toggle_focus(),
+        KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::Up | KeyCode::Char('k') => app.select_previous(),
+        KeyCode::Home | KeyCode::Char('g') => app.select_first(),
+        KeyCode::End | KeyCode::Char('G') => app.select_last(),
+        KeyCode::Enter => {
+            if app.selected_run().is_some() {
+                app.mode = AppMode::Detail;
+                app.detail_scroll = 0;
+            }
+        }
+        KeyCode::Char('/') => app.start_filter(),
+        _ => {}
+    }
+    false
+}
+
+fn handle_detail_key(app: &mut MonitorApp, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
+        KeyCode::Esc => app.mode = AppMode::Table,
+        KeyCode::Char('?') => app.show_help = true,
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.detail_scroll = app.detail_scroll.saturating_add(1)
+        }
+        KeyCode::Up | KeyCode::Char('k') => app.detail_scroll = app.detail_scroll.saturating_sub(1),
+        KeyCode::PageDown | KeyCode::Char('d') => {
+            app.detail_scroll = app.detail_scroll.saturating_add(10)
+        }
+        KeyCode::PageUp | KeyCode::Char('u') => {
+            app.detail_scroll = app.detail_scroll.saturating_sub(10)
+        }
+        KeyCode::Home | KeyCode::Char('g') => app.detail_scroll = 0,
+        KeyCode::End | KeyCode::Char('G') => app.detail_scroll = u16::MAX,
+        _ => {}
+    }
+    false
 }
 
 fn state_label(state: RunState) -> &'static str {
@@ -198,48 +465,166 @@ fn state_label(state: RunState) -> &'static str {
     }
 }
 
-fn detail_text(app: &MonitorApp, max_transcript_lines: usize) -> Vec<String> {
-    if app.runs.is_empty() {
-        return vec!["No headless run archives found.".to_string()];
+fn status_icon(state: RunState) -> &'static str {
+    match state {
+        RunState::Success => "✓",
+        RunState::Failed => "✗",
+        RunState::Active => "…",
+        RunState::Unknown => "?",
     }
+}
 
-    let run = &app.runs[app.selected];
+fn status_color(state: RunState) -> Color {
+    match state {
+        RunState::Success => GREEN,
+        RunState::Failed => RED,
+        RunState::Active => YELLOW,
+        RunState::Unknown => DIM,
+    }
+}
+
+fn profile_label(run: &RunSummary) -> &str {
+    run.profile_name.as_deref().unwrap_or("unknown")
+}
+
+fn project_label(run: &RunSummary) -> String {
+    run.path
+        .parent()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("runs")
+        .to_string()
+}
+
+fn mode_label(run: &RunSummary) -> &str {
+    if run.prompt_delivery.is_some() || run.stdout_file.exists() {
+        "headless"
+    } else {
+        "tmux"
+    }
+}
+
+fn stage_label(run: &RunSummary, tick: usize) -> String {
+    match run.state {
+        RunState::Active => format!("{} running", SPINNER_FRAMES[tick % SPINNER_FRAMES.len()]),
+        RunState::Success => "complete".to_string(),
+        RunState::Failed => "failed".to_string(),
+        RunState::Unknown => "unknown".to_string(),
+    }
+}
+
+fn run_duration(run: &RunSummary) -> String {
+    let Some(started) = parse_time(run.started_at.as_deref()) else {
+        return "?".to_string();
+    };
+    let end = run
+        .completed_at
+        .as_deref()
+        .and_then(|completed| DateTime::parse_from_rfc3339(completed).ok())
+        .unwrap_or_else(|| Utc::now().into());
+    let millis = end.signed_duration_since(started).num_milliseconds().max(0) as u64;
+    format_duration(millis)
+}
+
+fn parse_time(value: Option<&str>) -> Option<DateTime<FixedOffset>> {
+    value.and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+}
+
+fn short_time(value: Option<&str>) -> String {
+    let Some(time) = parse_time(value) else {
+        return "?".to_string();
+    };
+    let now = Utc::now();
+    let delta = now.signed_duration_since(time.with_timezone(&Utc));
+    if delta.num_seconds() < 60 {
+        "now".to_string()
+    } else if delta.num_minutes() < 60 {
+        format!("{}m", delta.num_minutes())
+    } else if delta.num_hours() < 24 {
+        format!("{}h", delta.num_hours())
+    } else {
+        time.format("%m-%d").to_string()
+    }
+}
+
+fn format_duration(millis: u64) -> String {
+    let secs = millis / 1_000;
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3_600 {
+        format!("{}m{}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{}m", secs / 3_600, (secs % 3_600) / 60)
+    }
+}
+
+fn detail_text(app: &MonitorApp, max_transcript_lines: usize) -> Vec<String> {
+    let Some(run) = app.selected_run() else {
+        return vec!["No run selected.".to_string()];
+    };
+
     let mut lines = vec![
-        format!("id: {}", run.id),
-        format!("state: {}", state_label(run.state)),
+        "Run".to_string(),
+        format!("  id: {}", run.id),
+        format!("  state: {}", state_label(run.state)),
+        format!("  project: {}", project_label(run)),
+        format!("  profile: {}", profile_label(run)),
         format!(
-            "profile: {}",
-            run.profile_name.as_deref().unwrap_or("unknown")
-        ),
-        format!(
-            "command: {}",
+            "  command: {}",
             run.profile_command.as_deref().unwrap_or("unknown")
         ),
+        format!("  args: {}", format_args(&run.profile_args)),
         format!(
-            "interface: {}",
+            "  interface: {}",
             run.interface.as_deref().unwrap_or("unknown")
         ),
+        format!("  mode: {}", mode_label(run)),
         format!(
-            "started: {}",
+            "  prompt delivery: {}",
+            run.prompt_delivery.as_deref().unwrap_or("unknown")
+        ),
+        format!(
+            "  started: {}",
             run.started_at.as_deref().unwrap_or("unknown")
         ),
     ];
 
     if let Some(completed_at) = run.completed_at.as_deref() {
-        lines.push(format!("completed: {completed_at}"));
+        lines.push(format!("  completed: {completed_at}"));
     }
+    lines.push(format!("  duration: {}", run_duration(run)));
     if let Some(exit_code) = run.exit_code {
-        lines.push(format!("exit code: {exit_code}"));
+        lines.push(format!("  exit code: {exit_code}"));
+    }
+    if let Some(seen) = run.completion_event_seen {
+        lines.push(format!("  completion event seen: {seen}"));
     }
     if let Some(failure) = run.failure.as_deref() {
-        lines.push(format!("failure: {failure}"));
+        lines.push(format!("  failure: {failure}"));
     }
     if let Some(error) = run.metadata_error.as_deref() {
-        lines.push(format!("metadata error: {error}"));
+        lines.push(format!("  metadata error: {error}"));
+    }
+    if let Some(pid) = run.pid {
+        lines.push(format!("  pid: {pid}"));
+    }
+    if let Some(pane_id) = run.tmux_pane_id.as_deref() {
+        lines.push(format!("  tmux pane: {pane_id}"));
+    }
+    lines.push(format!("  run directory: {}", run.path.display()));
+
+    lines.push(String::new());
+    lines.push("Prompt".to_string());
+    let prompt_path = run.path.join("prompt.md");
+    match fs::read_to_string(&prompt_path) {
+        Ok(prompt) if !prompt.trim().is_empty() => {
+            lines.extend(prompt.lines().map(|line| format!("  {line}")));
+        }
+        _ => lines.push("  (prompt not archived)".to_string()),
     }
 
     lines.push(String::new());
-    lines.push("transcript:".to_string());
+    lines.push("Transcript".to_string());
 
     let empty_transcript = RunTranscript::default();
     let transcript = app.transcripts.get(&run.path).unwrap_or(&empty_transcript);
@@ -258,7 +643,7 @@ fn detail_text(app: &MonitorApp, max_transcript_lines: usize) -> Vec<String> {
         lines.push("  (no output yet)".to_string());
     } else {
         for line in transcript_lines {
-            lines.push(line.clone());
+            lines.push(format!("  {line}"));
         }
     }
 
@@ -266,7 +651,41 @@ fn detail_text(app: &MonitorApp, max_transcript_lines: usize) -> Vec<String> {
         lines.push(format!("  (partial) {pending}"));
     }
 
+    lines.push(String::new());
+    lines.push("Artifacts".to_string());
+    for artifact in artifacts(run) {
+        lines.push(format!("  {artifact}"));
+    }
+
     lines
+}
+
+fn format_args(args: &[String]) -> String {
+    if args.is_empty() {
+        "(none)".to_string()
+    } else {
+        args.join(" ")
+    }
+}
+
+fn artifacts(run: &RunSummary) -> Vec<String> {
+    let mut artifacts = Vec::new();
+    let Ok(entries) = fs::read_dir(&run.path) else {
+        return vec!["(run directory unavailable)".to_string()];
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && let Some(name) = path.file_name().and_then(|name| name.to_str())
+        {
+            artifacts.push(name.to_string());
+        }
+    }
+    artifacts.sort();
+    if artifacts.is_empty() {
+        artifacts.push("(none)".to_string());
+    }
+    artifacts
 }
 
 fn detail_lines(app: &MonitorApp, max_transcript_lines: usize) -> Vec<Line<'static>> {
@@ -276,65 +695,386 @@ fn detail_lines(app: &MonitorApp, max_transcript_lines: usize) -> Vec<Line<'stat
         .collect()
 }
 
-fn draw(frame: &mut ratatui::Frame<'_>, app: &MonitorApp) {
-    let root = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(frame.area());
+fn draw(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp) {
+    let area = frame.area();
+    frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
+    match app.mode {
+        AppMode::Table => draw_table(frame, app, area),
+        AppMode::Detail => draw_detail(frame, app, area),
+    }
+    if app.show_help {
+        draw_help(frame, app);
+    }
+}
 
+fn draw_table(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect) {
+    let active_height = (app.active_indices.len() as u16 + 3)
+        .min(area.height.saturating_sub(5) / 2)
+        .max(4);
+    let filter_height = if app.filter_editing { 1 } else { 0 };
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
-        .split(root[0]);
-
-    let runs = app.runs.iter().enumerate().map(|(index, run)| {
-        let selected = index == app.selected;
-        let state = state_label(run.state);
-        let title = run.profile_name.as_deref().unwrap_or(&run.id);
-        let started = run.started_at.as_deref().unwrap_or("unknown time");
-        let prefix = if selected { "> " } else { "  " };
-        ListItem::new(vec![
-            Line::from(format!("{prefix}{state} {title}")),
-            Line::from(format!("  {started}")),
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(active_height),
+            Constraint::Min(5),
+            Constraint::Length(filter_height),
+            Constraint::Length(1),
         ])
-    });
+        .split(area);
 
-    let list = List::new(runs.collect::<Vec<_>>()).block(Block::bordered().title("Headless runs"));
-    frame.render_widget(list, chunks[0]);
+    draw_header(frame, app, chunks[0]);
+    draw_active_table(frame, app, chunks[1]);
+    draw_history_table(frame, app, chunks[2]);
+    if app.filter_editing {
+        draw_filter(frame, app, chunks[3]);
+    }
+    draw_status(frame, app, chunks[4]);
+}
 
-    let detail_height = chunks[1].height.saturating_sub(2) as usize;
-    let detail = Paragraph::new(detail_lines(app, detail_height))
-        .block(Block::bordered().title("Run detail"))
-        .wrap(Wrap { trim: false });
+fn draw_header(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
+    let profiles = app
+        .runs
+        .iter()
+        .filter_map(|run| run.profile_name.as_deref())
+        .collect::<HashSet<_>>()
+        .len();
+    let completed = app
+        .runs
+        .iter()
+        .filter(|run| matches!(run.state, RunState::Success | RunState::Failed))
+        .count();
+    let line = Line::from(vec![
+        Span::styled(
+            " sideagent-monitor",
+            Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(DIM)),
+        Span::styled(format!("{profiles}"), Style::default().fg(DIM_WHITE)),
+        Span::styled(" profiles · ", Style::default().fg(DIM_WHITE)),
+        Span::styled(
+            format!("{}", app.active_indices.len()),
+            Style::default().fg(if app.active_indices.is_empty() {
+                DIM
+            } else {
+                YELLOW
+            }),
+        ),
+        Span::styled(" active runs · ", Style::default().fg(DIM_WHITE)),
+        Span::styled(format!("{completed}"), Style::default().fg(DIM_WHITE)),
+        Span::styled(" completed", Style::default().fg(DIM_WHITE)),
+    ]);
+    frame.render_widget(Paragraph::new(line).style(Style::default().bg(BG)), area);
+}
+
+fn draw_active_table(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect) {
+    let header = Row::new(vec![
+        "Started",
+        "Project",
+        "Profile",
+        "Interface",
+        "Mode",
+        "Stage",
+        "Dur",
+    ])
+    .style(Style::default().fg(TEAL).add_modifier(Modifier::BOLD));
+    let rows = app
+        .active_indices
+        .iter()
+        .map(|&index| {
+            let run = &app.runs[index];
+            Row::new(vec![
+                short_time(run.started_at.as_deref()),
+                project_label(run),
+                profile_label(run).to_string(),
+                run.interface.as_deref().unwrap_or("unknown").to_string(),
+                mode_label(run).to_string(),
+                stage_label(run, app.tick),
+                run_duration(run),
+            ])
+            .style(Style::default().fg(DIM_WHITE))
+        })
+        .collect::<Vec<_>>();
+
+    let block = table_block(" Active ", app.focus == Focus::Active);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(9),
+            Constraint::Length(18),
+            Constraint::Length(18),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Min(12),
+            Constraint::Length(8),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(Style::default().bg(SELECTED_BG))
+    .block(block);
+
+    if app.focus == Focus::Active && !app.active_indices.is_empty() {
+        app.active_table_state.select(Some(app.active_selected));
+    } else {
+        app.active_table_state.select(None);
+    }
+    frame.render_stateful_widget(table, area, &mut app.active_table_state);
+}
+
+fn draw_history_table(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect) {
+    let header = Row::new(vec![
+        "Time",
+        "Project",
+        "Profile",
+        "Interface",
+        "Mode",
+        "Duration",
+        "Exit",
+        "✓",
+    ])
+    .style(Style::default().fg(TEAL).add_modifier(Modifier::BOLD));
+    let rows = app
+        .filtered_history_indices
+        .iter()
+        .map(|&index| {
+            let run = &app.runs[index];
+            Row::new(vec![
+                short_time(run.completed_at.as_deref().or(run.started_at.as_deref())),
+                project_label(run),
+                profile_label(run).to_string(),
+                run.interface.as_deref().unwrap_or("unknown").to_string(),
+                mode_label(run).to_string(),
+                run_duration(run),
+                run.exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                status_icon(run.state).to_string(),
+            ])
+            .style(Style::default().fg(status_color(run.state)))
+        })
+        .collect::<Vec<_>>();
+
+    let block = table_block(" History ", app.focus == Focus::History);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(9),
+            Constraint::Length(18),
+            Constraint::Length(18),
+            Constraint::Length(10),
+            Constraint::Length(9),
+            Constraint::Length(10),
+            Constraint::Length(6),
+            Constraint::Length(2),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(Style::default().bg(SELECTED_BG))
+    .block(block);
+
+    if app.focus == Focus::History && !app.filtered_history_indices.is_empty() {
+        app.history_table_state.select(Some(app.history_selected));
+    } else {
+        app.history_table_state.select(None);
+    }
+    frame.render_stateful_widget(table, area, &mut app.history_table_state);
+}
+
+fn table_block(title: &'static str, focused: bool) -> Block<'static> {
+    Block::default()
+        .title(Line::from(Span::styled(
+            title,
+            Style::default().fg(if focused { TEAL } else { DIM_WHITE }),
+        )))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(SEPARATOR))
+        .style(Style::default().bg(BG))
+}
+
+fn draw_filter(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
+    let bar = Line::from(vec![
+        Span::styled(" /", Style::default().fg(TEAL)),
+        Span::styled(&app.filter_draft, Style::default().fg(WHITE)),
+        Span::styled("▎", Style::default().fg(TEAL)),
+    ]);
+    frame.render_widget(Paragraph::new(bar).style(Style::default().bg(BG)), area);
+}
+
+fn draw_status(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
+    let mut spans = vec![
+        Span::styled(" j/k", Style::default().fg(TEAL)),
+        Span::styled(" navigate  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("Tab", Style::default().fg(TEAL)),
+        Span::styled(" switch  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("/", Style::default().fg(TEAL)),
+        Span::styled(" filter  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("Enter", Style::default().fg(TEAL)),
+        Span::styled(" detail  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("?", Style::default().fg(TEAL)),
+        Span::styled(" help  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("q", Style::default().fg(TEAL)),
+        Span::styled(" quit", Style::default().fg(DIM_WHITE)),
+    ];
+    if !app.filter_text.is_empty() && !app.filter_editing {
+        spans.push(Span::styled("  filter: ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            app.filter_text.clone(),
+            Style::default().fg(TEAL),
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(BG)),
+        area,
+    );
+}
+
+fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    draw_header(frame, app, chunks[0]);
+    let height = chunks[1].height.saturating_sub(2) as usize;
+    let detail = Paragraph::new(detail_lines(
+        app,
+        height.saturating_add(app.detail_scroll as usize),
+    ))
+    .block(table_block(" Run detail ", true))
+    .scroll((app.detail_scroll, 0))
+    .wrap(Wrap { trim: false });
     frame.render_widget(detail, chunks[1]);
-
     let footer = Paragraph::new(Line::from(vec![
-        Span::raw("j/k or arrows: navigate  "),
-        Span::raw("g/G or Home/End: first/last  "),
-        Span::raw("q or Esc: quit"),
+        Span::styled(" Esc", Style::default().fg(TEAL)),
+        Span::styled(" table  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("j/k", Style::default().fg(TEAL)),
+        Span::styled(" scroll  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("?", Style::default().fg(TEAL)),
+        Span::styled(" help  ", Style::default().fg(DIM_WHITE)),
+        Span::styled("q", Style::default().fg(TEAL)),
+        Span::styled(" quit", Style::default().fg(DIM_WHITE)),
     ]))
-    .style(Style::default());
-    frame.render_widget(footer, root[1]);
+    .style(Style::default().bg(BG));
+    frame.render_widget(footer, chunks[2]);
+}
+
+fn draw_help(frame: &mut ratatui::Frame<'_>, app: &MonitorApp) {
+    let shortcuts = match app.mode {
+        AppMode::Table => vec![
+            ("j / ↓", "Move down"),
+            ("k / ↑", "Move up"),
+            ("Tab", "Switch Active and History focus"),
+            ("Enter", "Open detail view"),
+            ("/", "Filter history"),
+            ("Esc / q", "Quit"),
+            ("?", "Toggle this help"),
+        ],
+        AppMode::Detail => vec![
+            ("j / ↓", "Scroll down"),
+            ("k / ↑", "Scroll up"),
+            ("d / PageDown", "Page down"),
+            ("u / PageUp", "Page up"),
+            ("g / G", "Scroll to top or bottom"),
+            ("Esc", "Back to table"),
+            ("q", "Quit"),
+            ("?", "Toggle this help"),
+        ],
+    };
+    let width = 44;
+    let height = shortcuts.len() as u16 + 4;
+    let area = frame.area();
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    };
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .title(" Shortcuts ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(TEAL))
+        .style(Style::default().bg(BG));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let mut lines = vec![Line::from("")];
+    for (key, action) in shortcuts {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{key:<13}"), Style::default().fg(TEAL)),
+            Span::styled(action, Style::default().fg(WHITE)),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Left), inner);
 }
 
 fn print_snapshot(app: &MonitorApp) {
-    println!("Headless runs");
-    if app.runs.is_empty() {
-        println!("No headless run archives found.");
-        return;
-    }
-
-    for (index, run) in app.runs.iter().enumerate() {
-        let marker = if index == app.selected { ">" } else { " " };
-        println!(
-            "{marker} {} {}",
-            state_label(run.state),
-            run.profile_name.as_deref().unwrap_or(&run.id)
-        );
-    }
-
+    println!(
+        "sideagent-monitor · {} profiles · {} active runs · {} completed",
+        app.runs
+            .iter()
+            .filter_map(|run| run.profile_name.as_deref())
+            .collect::<HashSet<_>>()
+            .len(),
+        app.active_indices.len(),
+        app.runs
+            .iter()
+            .filter(|run| matches!(run.state, RunState::Success | RunState::Failed))
+            .count()
+    );
     println!();
-    println!("Run detail");
+    println!("Active");
+    println!("Started | Project | Profile | Interface | Mode | Stage | Dur");
+    if app.active_indices.is_empty() {
+        println!("(none)");
+    } else {
+        for &index in &app.active_indices {
+            let run = &app.runs[index];
+            println!(
+                "{} | {} | {} | {} | {} | {} | {}",
+                short_time(run.started_at.as_deref()),
+                project_label(run),
+                profile_label(run),
+                run.interface.as_deref().unwrap_or("unknown"),
+                mode_label(run),
+                stage_label(run, app.tick),
+                run_duration(run)
+            );
+        }
+    }
+    println!();
+    println!("History");
+    if !app.filter_text.is_empty() {
+        println!("filter: {}", app.filter_text);
+    }
+    println!("Time | Project | Profile | Interface | Mode | Duration | Exit | ✓");
+    if app.filtered_history_indices.is_empty() {
+        println!("(none)");
+    } else {
+        for &index in &app.filtered_history_indices {
+            let run = &app.runs[index];
+            println!(
+                "{} | {} | {} | {} | {} | {} | {} | {}",
+                short_time(run.completed_at.as_deref().or(run.started_at.as_deref())),
+                project_label(run),
+                profile_label(run),
+                run.interface.as_deref().unwrap_or("unknown"),
+                mode_label(run),
+                run_duration(run),
+                run.exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                status_icon(run.state)
+            );
+        }
+    }
+    println!();
+    println!("Detail");
     for line in detail_text(app, usize::MAX) {
         println!("{line}");
     }
@@ -345,12 +1085,30 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn write_run(path: PathBuf, name: &str, started_at: &str, text: &str) {
+    fn write_run(path: PathBuf, name: &str, started_at: &str, status: &str, text: &str) {
         fs::create_dir_all(&path).unwrap();
         fs::write(
             path.join("metadata.json"),
             format!(
-                r#"{{"profile":{{"name":"{name}","command":"agent","args":[]}},"interface":"claude","started_at":"{started_at}","status":"running"}}"#
+                r#"{{"profile":{{"name":"{name}","command":"agent","args":[]}},"interface":"claude","prompt_delivery":"argument","started_at":"{started_at}","completed_at":"2026-06-09T02:00:00Z","status":"{status}","exit_code":0}}"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            path.join("stdout.jsonl"),
+            format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_active_run(path: PathBuf, name: &str, started_at: &str, text: &str) {
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join("metadata.json"),
+            format!(
+                r#"{{"profile":{{"name":"{name}","command":"agent","args":[]}},"interface":"claude","prompt_delivery":"argument","started_at":"{started_at}","status":"running"}}"#
             ),
         )
         .unwrap();
@@ -371,20 +1129,21 @@ mod tests {
     }
 
     #[test]
-    fn app_poll_loads_run_and_transcript() {
+    fn app_poll_splits_active_and_history() {
         let dir = tempfile::TempDir::new().unwrap();
-        let run_path = dir.path().join("run-1");
-        fs::create_dir_all(&run_path).unwrap();
-        fs::write(
-            run_path.join("metadata.json"),
-            r#"{"profile":{"name":"demo","command":"agent","args":[]},"interface":"claude","started_at":"2026-06-09T00:00:00Z","status":"running"}"#,
-        )
-        .unwrap();
-        fs::write(
-            run_path.join("stdout.jsonl"),
-            b"{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}\n",
-        )
-        .unwrap();
+        write_active_run(
+            dir.path().join("run-active"),
+            "demo",
+            "2026-06-09T00:00:00Z",
+            "hello",
+        );
+        write_run(
+            dir.path().join("run-done"),
+            "demo",
+            "2026-06-09T01:00:00Z",
+            "success",
+            "done",
+        );
 
         let mut app = MonitorApp::new(
             MonitorCore::new(dir.path().to_path_buf()),
@@ -392,20 +1151,24 @@ mod tests {
         );
         app.poll().unwrap();
 
-        assert_eq!(app.runs.len(), 1);
-        assert_eq!(app.transcripts[&run_path].lines, vec!["[text]  hello"]);
+        assert_eq!(app.active_indices.len(), 1);
+        assert_eq!(app.filtered_history_indices.len(), 1);
+        assert_eq!(
+            app.transcripts[&dir.path().join("run-active")].lines,
+            vec!["[text]  hello"]
+        );
     }
 
     #[test]
     fn app_preserves_transcript_cache_when_switching_runs() {
         let dir = tempfile::TempDir::new().unwrap();
-        write_run(
+        write_active_run(
             dir.path().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        write_run(
+        write_active_run(
             dir.path().join("run-b"),
             "b",
             "2026-06-09T01:00:00Z",
@@ -417,27 +1180,27 @@ mod tests {
             Duration::from_millis(50),
         );
         app.poll().unwrap();
-        assert_eq!(line_count(&app, "[text]  second"), 1);
+        assert_eq!(line_count(&app, "  [text]  second"), 1);
 
         app.select_next();
         app.poll().unwrap();
-        assert_eq!(line_count(&app, "[text]  first"), 1);
+        assert_eq!(line_count(&app, "  [text]  first"), 1);
 
         app.select_previous();
         app.poll().unwrap();
-        assert_eq!(line_count(&app, "[text]  second"), 1);
+        assert_eq!(line_count(&app, "  [text]  second"), 1);
     }
 
     #[test]
     fn app_preserves_selected_run_when_poll_resorts_runs() {
         let dir = tempfile::TempDir::new().unwrap();
-        write_run(
+        write_active_run(
             dir.path().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        write_run(
+        write_active_run(
             dir.path().join("run-b"),
             "b",
             "2026-06-09T01:00:00Z",
@@ -450,9 +1213,9 @@ mod tests {
         );
         app.poll().unwrap();
         app.select_next();
-        let selected_path = app.runs[app.selected].path.clone();
+        let selected_path = app.selected_run().unwrap().path.clone();
 
-        write_run(
+        write_active_run(
             dir.path().join("run-c"),
             "c",
             "2026-06-09T02:00:00Z",
@@ -460,7 +1223,38 @@ mod tests {
         );
         app.poll().unwrap();
 
-        assert_eq!(app.runs[app.selected].path, selected_path);
+        assert_eq!(app.selected_run().unwrap().path, selected_path);
+    }
+
+    #[test]
+    fn history_filter_matches_profile() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_run(
+            dir.path().join("run-a"),
+            "alpha",
+            "2026-06-09T00:00:00Z",
+            "success",
+            "first",
+        );
+        write_run(
+            dir.path().join("run-b"),
+            "beta",
+            "2026-06-09T01:00:00Z",
+            "success",
+            "second",
+        );
+        let mut app = MonitorApp::new(
+            MonitorCore::new(dir.path().to_path_buf()),
+            Duration::from_millis(50),
+        );
+        app.poll().unwrap();
+        app.filter_text = "alpha".to_string();
+        app.rebuild_filter();
+        assert_eq!(app.filtered_history_indices.len(), 1);
+        assert_eq!(
+            profile_label(&app.runs[app.filtered_history_indices[0]]),
+            "alpha"
+        );
     }
 
     #[test]

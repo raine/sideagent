@@ -27,16 +27,16 @@ use std::time::Duration;
 use super::runs::RunState;
 use super::{MonitorCore, RunSummary};
 
-const TEAL: Color = Color::Rgb(78, 201, 176);
-const WHITE: Color = Color::Rgb(255, 255, 255);
-const DIM_WHITE: Color = Color::Rgb(180, 190, 200);
-const SEPARATOR: Color = Color::Rgb(80, 80, 80);
-const BG: Color = Color::Rgb(18, 18, 22);
-const GREEN: Color = Color::Rgb(120, 200, 120);
-const RED: Color = Color::Rgb(220, 120, 120);
-const YELLOW: Color = Color::Rgb(220, 200, 100);
-const DIM: Color = Color::Rgb(100, 100, 110);
-const SELECTED_BG: Color = Color::Rgb(40, 40, 50);
+const PRIMARY: Color = Color::Rgb(181, 142, 255);
+const WHITE: Color = Color::Rgb(245, 241, 255);
+const DIM_WHITE: Color = Color::Rgb(186, 178, 205);
+const SEPARATOR: Color = Color::Rgb(68, 60, 92);
+const BG: Color = Color::Rgb(17, 15, 28);
+const GREEN: Color = Color::Rgb(121, 214, 170);
+const RED: Color = Color::Rgb(244, 129, 129);
+const YELLOW: Color = Color::Rgb(245, 184, 108);
+const DIM: Color = Color::Rgb(126, 116, 148);
+const SELECTED_BG: Color = Color::Rgb(43, 35, 67);
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const PROMPT_COLLAPSED_LINES: usize = 10;
 
@@ -823,7 +823,7 @@ fn detail_text(app: &MonitorApp, max_transcript_lines: usize) -> Vec<String> {
 fn section_header(title: &'static str) -> Line<'static> {
     Line::from(vec![Span::styled(
         format!("  {title}"),
-        Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+        Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
     )])
 }
 
@@ -865,7 +865,7 @@ fn render_prompt_block(
                 .bg(SELECTED_BG)
                 .add_modifier(Modifier::ITALIC)
         } else {
-            Style::default().fg(TEAL).add_modifier(Modifier::ITALIC)
+            Style::default().fg(PRIMARY).add_modifier(Modifier::ITALIC)
         };
         rendered.push(Line::from(vec![
             Span::raw("    "),
@@ -1169,13 +1169,13 @@ fn heading_prefix(level: HeadingLevel) -> &'static str {
 fn prompt_markdown_style(attrs: PromptMarkdownAttrs) -> Style {
     let mut style = Style::default().fg(DIM_WHITE);
     if attrs.heading {
-        style = style.fg(TEAL).add_modifier(Modifier::BOLD);
+        style = style.fg(PRIMARY).add_modifier(Modifier::BOLD);
     }
     if attrs.quote {
         style = style.fg(GREEN);
     }
     if attrs.link {
-        style = style.fg(TEAL).add_modifier(Modifier::UNDERLINED);
+        style = style.fg(PRIMARY).add_modifier(Modifier::UNDERLINED);
     }
     if attrs.code {
         style = style.fg(YELLOW).bg(Color::Rgb(35, 35, 42));
@@ -1203,7 +1203,7 @@ fn transcript_line(line: String) -> Line<'static> {
         Line::from(vec![
             Span::styled(
                 "  text ",
-                Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+                Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
             ),
             Span::styled(rest.trim_start().to_string(), Style::default().fg(WHITE)),
         ])
@@ -1397,7 +1397,7 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
     let line = Line::from(vec![
         Span::styled(
             " sideagent-monitor",
-            Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+            Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" · ", Style::default().fg(DIM)),
         Span::styled(format!("{profiles}"), Style::default().fg(DIM_WHITE)),
@@ -1428,7 +1428,7 @@ fn draw_active_table(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area:
         "Dur",
         "",
     ])
-    .style(Style::default().fg(TEAL).add_modifier(Modifier::BOLD));
+    .style(Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD));
     let rows = app
         .active_indices
         .iter()
@@ -1486,7 +1486,7 @@ fn draw_history_table(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area
         "✓",
         "",
     ])
-    .style(Style::default().fg(TEAL).add_modifier(Modifier::BOLD));
+    .style(Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD));
     let rows = app
         .filtered_history_indices
         .iter()
@@ -1540,7 +1540,7 @@ fn table_block(title: &'static str, focused: bool) -> Block<'static> {
     Block::default()
         .title(Line::from(Span::styled(
             title,
-            Style::default().fg(if focused { TEAL } else { DIM_WHITE }),
+            Style::default().fg(if focused { PRIMARY } else { DIM_WHITE }),
         )))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1550,33 +1550,33 @@ fn table_block(title: &'static str, focused: bool) -> Block<'static> {
 
 fn draw_filter(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
     let bar = Line::from(vec![
-        Span::styled(" /", Style::default().fg(TEAL)),
+        Span::styled(" /", Style::default().fg(PRIMARY)),
         Span::styled(&app.filter_draft, Style::default().fg(WHITE)),
-        Span::styled("▎", Style::default().fg(TEAL)),
+        Span::styled("▎", Style::default().fg(PRIMARY)),
     ]);
     frame.render_widget(Paragraph::new(bar).style(Style::default().bg(BG)), area);
 }
 
 fn draw_status(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Rect) {
     let mut spans = vec![
-        Span::styled(" j/k", Style::default().fg(TEAL)),
+        Span::styled(" j/k", Style::default().fg(PRIMARY)),
         Span::styled(" navigate  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("Tab", Style::default().fg(TEAL)),
+        Span::styled("Tab", Style::default().fg(PRIMARY)),
         Span::styled(" switch  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("/", Style::default().fg(TEAL)),
+        Span::styled("/", Style::default().fg(PRIMARY)),
         Span::styled(" filter  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("Enter", Style::default().fg(TEAL)),
+        Span::styled("Enter", Style::default().fg(PRIMARY)),
         Span::styled(" detail  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("?", Style::default().fg(TEAL)),
+        Span::styled("?", Style::default().fg(PRIMARY)),
         Span::styled(" help  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("q", Style::default().fg(TEAL)),
+        Span::styled("q", Style::default().fg(PRIMARY)),
         Span::styled(" quit", Style::default().fg(DIM_WHITE)),
     ];
     if !app.filter_text.is_empty() && !app.filter_editing {
         spans.push(Span::styled("  filter: ", Style::default().fg(DIM)));
         spans.push(Span::styled(
             app.filter_text.clone(),
-            Style::default().fg(TEAL),
+            Style::default().fg(PRIMARY),
         ));
     }
     frame.render_widget(
@@ -1636,13 +1636,13 @@ fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect)
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, chunks[1]);
     let mut footer_spans = vec![
-        Span::styled(" Esc", Style::default().fg(TEAL)),
+        Span::styled(" Esc", Style::default().fg(PRIMARY)),
         Span::styled(" table  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("i", Style::default().fg(TEAL)),
+        Span::styled("i", Style::default().fg(PRIMARY)),
         Span::styled(" info  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("p", Style::default().fg(TEAL)),
+        Span::styled("p", Style::default().fg(PRIMARY)),
         Span::styled(" prompt  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("j/k", Style::default().fg(TEAL)),
+        Span::styled("j/k", Style::default().fg(PRIMARY)),
         Span::styled(" scroll  ", Style::default().fg(DIM_WHITE)),
         Span::styled(
             format!("{}/{}", app.detail_scroll, max_scroll),
@@ -1650,22 +1650,22 @@ fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect)
         ),
     ];
     if is_live {
-        footer_spans.push(Span::styled("  G", Style::default().fg(TEAL)));
+        footer_spans.push(Span::styled("  G", Style::default().fg(PRIMARY)));
         footer_spans.push(Span::styled(" follow  ", Style::default().fg(DIM_WHITE)));
         if app.detail_auto_scroll {
             footer_spans.push(Span::styled(
                 " FOLLOW ",
                 Style::default()
                     .fg(BG)
-                    .bg(TEAL)
+                    .bg(PRIMARY)
                     .add_modifier(Modifier::BOLD),
             ));
         }
     }
     footer_spans.extend([
-        Span::styled("  ?", Style::default().fg(TEAL)),
+        Span::styled("  ?", Style::default().fg(PRIMARY)),
         Span::styled(" help  ", Style::default().fg(DIM_WHITE)),
-        Span::styled("q", Style::default().fg(TEAL)),
+        Span::styled("q", Style::default().fg(PRIMARY)),
         Span::styled(" quit", Style::default().fg(DIM_WHITE)),
     ]);
     let footer = Paragraph::new(Line::from(footer_spans)).style(Style::default().bg(BG));
@@ -1708,7 +1708,7 @@ fn draw_detail_header(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area: Re
     let line = Line::from(vec![
         Span::styled(
             format!(" {} ", run.id),
-            Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+            Style::default().fg(PRIMARY).add_modifier(Modifier::BOLD),
         ),
         Span::styled(profile_label(run).to_string(), Style::default().fg(WHITE)),
         Span::styled("  ", Style::default()),
@@ -1751,7 +1751,7 @@ fn draw_run_info_overlay(frame: &mut ratatui::Frame<'_>, app: &MonitorApp, area:
         .title(" Run info ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(TEAL))
+        .border_style(Style::default().fg(PRIMARY))
         .style(Style::default().bg(BG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -1843,7 +1843,7 @@ fn draw_help(frame: &mut ratatui::Frame<'_>, app: &MonitorApp) {
         .title(" Shortcuts ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(TEAL))
+        .border_style(Style::default().fg(PRIMARY))
         .style(Style::default().bg(BG));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -1851,7 +1851,7 @@ fn draw_help(frame: &mut ratatui::Frame<'_>, app: &MonitorApp) {
     for (key, action) in shortcuts {
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(format!("{key:<13}"), Style::default().fg(TEAL)),
+            Span::styled(format!("{key:<13}"), Style::default().fg(PRIMARY)),
             Span::styled(action, Style::default().fg(WHITE)),
         ]));
     }
@@ -2280,7 +2280,7 @@ mod tests {
         let code = lines[2].spans[2].style;
         let bold = lines[2].spans[4].style;
 
-        assert_eq!(title.fg, Some(TEAL));
+        assert_eq!(title.fg, Some(PRIMARY));
         assert!(title.add_modifier.contains(Modifier::BOLD));
         assert_eq!(code.fg, Some(YELLOW));
         assert!(bold.add_modifier.contains(Modifier::BOLD));

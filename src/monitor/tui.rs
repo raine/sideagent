@@ -8,6 +8,7 @@ use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -851,32 +852,344 @@ fn render_prompt_block(
     expanded: bool,
     more_hovered: bool,
 ) -> Vec<Line<'static>> {
+    let collapsed = !expanded && lines.len() > PROMPT_COLLAPSED_LINES;
     let display_lines = prompt_display_lines(lines, expanded);
-    display_lines
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            let is_more = !expanded && index == PROMPT_COLLAPSED_LINES;
-            let style = if is_more && more_hovered {
-                Style::default()
-                    .fg(WHITE)
-                    .bg(SELECTED_BG)
-                    .add_modifier(Modifier::ITALIC)
-            } else if is_more {
-                Style::default().fg(TEAL).add_modifier(Modifier::ITALIC)
-            } else {
-                Style::default().fg(DIM_WHITE)
-            };
-            if line.trim().is_empty() {
-                Line::default()
-            } else {
-                Line::from(vec![
-                    Span::raw("    "),
-                    Span::styled(line.trim_end().to_string(), style),
-                ])
+    let mut body_lines = display_lines;
+    let more_line = if collapsed { body_lines.pop() } else { None };
+    let mut rendered = render_prompt_markdown(&body_lines.join("\n"));
+
+    if let Some(line) = more_line {
+        let style = if more_hovered {
+            Style::default()
+                .fg(WHITE)
+                .bg(SELECTED_BG)
+                .add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default().fg(TEAL).add_modifier(Modifier::ITALIC)
+        };
+        rendered.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(line, style),
+        ]));
+    }
+
+    rendered
+}
+
+#[derive(Clone, Copy, Default)]
+struct PromptMarkdownAttrs {
+    bold: bool,
+    italic: bool,
+    strikethrough: bool,
+    code: bool,
+    heading: bool,
+    quote: bool,
+    link: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PromptList {
+    next: Option<u64>,
+    depth: usize,
+}
+
+struct PromptMarkdownRenderer {
+    lines: Vec<Line<'static>>,
+    spans: Vec<Span<'static>>,
+    attrs_stack: Vec<PromptMarkdownAttrs>,
+    list_stack: Vec<PromptList>,
+    quote_depth: usize,
+    in_code_block: bool,
+    at_line_start: bool,
+}
+
+fn render_prompt_markdown(input: &str) -> Vec<Line<'static>> {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(input, options);
+    let mut renderer = PromptMarkdownRenderer::new();
+
+    for event in parser {
+        renderer.handle(event);
+    }
+
+    renderer.finish()
+}
+
+impl PromptMarkdownRenderer {
+    fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            spans: Vec::new(),
+            attrs_stack: Vec::new(),
+            list_stack: Vec::new(),
+            quote_depth: 0,
+            in_code_block: false,
+            at_line_start: true,
+        }
+    }
+
+    fn handle(&mut self, event: MarkdownEvent<'_>) {
+        match event {
+            MarkdownEvent::Start(tag) => self.start_tag(tag),
+            MarkdownEvent::End(tag) => self.end_tag(tag),
+            MarkdownEvent::Text(text) => self.push_text(&text),
+            MarkdownEvent::Code(code) => self.push_code(&code),
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                self.flush_line();
+                self.emit_continuation_prefix();
             }
-        })
-        .collect()
+            MarkdownEvent::Rule => {
+                self.ensure_blank_line();
+                self.push_styled("─".repeat(32), PromptMarkdownAttrs::default());
+                self.flush_line();
+            }
+            MarkdownEvent::Html(html) | MarkdownEvent::InlineHtml(html) => self.push_text(&html),
+            _ => {}
+        }
+    }
+
+    fn start_tag(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {
+                if self.should_separate_block() {
+                    self.ensure_blank_line();
+                }
+            }
+            Tag::Heading { level, .. } => {
+                self.ensure_blank_line();
+                self.push_styled(
+                    heading_prefix(level),
+                    PromptMarkdownAttrs {
+                        heading: true,
+                        ..PromptMarkdownAttrs::default()
+                    },
+                );
+                self.attrs_stack.push(PromptMarkdownAttrs {
+                    heading: true,
+                    ..PromptMarkdownAttrs::default()
+                });
+            }
+            Tag::Strong => self.attrs_stack.push(PromptMarkdownAttrs {
+                bold: true,
+                ..PromptMarkdownAttrs::default()
+            }),
+            Tag::Emphasis => self.attrs_stack.push(PromptMarkdownAttrs {
+                italic: true,
+                ..PromptMarkdownAttrs::default()
+            }),
+            Tag::Strikethrough => self.attrs_stack.push(PromptMarkdownAttrs {
+                strikethrough: true,
+                ..PromptMarkdownAttrs::default()
+            }),
+            Tag::CodeBlock(_) => {
+                self.ensure_blank_line();
+                self.in_code_block = true;
+            }
+            Tag::List(next) => {
+                if self.should_separate_block() {
+                    self.ensure_blank_line();
+                }
+                let depth = self.list_stack.len();
+                self.list_stack.push(PromptList { next, depth });
+            }
+            Tag::Item => {
+                self.flush_line();
+                let Some(list) = self.list_stack.last_mut() else {
+                    return;
+                };
+                let indent = "  ".repeat(list.depth);
+                let bullet = match &mut list.next {
+                    Some(next) => {
+                        let bullet = format!("{indent}{next}. ");
+                        *next += 1;
+                        bullet
+                    }
+                    None => format!("{indent}- "),
+                };
+                self.push_styled(bullet, PromptMarkdownAttrs::default());
+            }
+            Tag::BlockQuote(_) => {
+                self.ensure_blank_line();
+                self.quote_depth += 1;
+                self.push_styled(
+                    "> ",
+                    PromptMarkdownAttrs {
+                        quote: true,
+                        ..PromptMarkdownAttrs::default()
+                    },
+                );
+                self.attrs_stack.push(PromptMarkdownAttrs {
+                    quote: true,
+                    ..PromptMarkdownAttrs::default()
+                });
+            }
+            Tag::Link { .. } => self.attrs_stack.push(PromptMarkdownAttrs {
+                link: true,
+                ..PromptMarkdownAttrs::default()
+            }),
+            _ => {}
+        }
+    }
+
+    fn end_tag(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph | TagEnd::Item => self.flush_line(),
+            TagEnd::Heading(_) => {
+                self.flush_line();
+                self.attrs_stack.pop();
+            }
+            TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough | TagEnd::Link => {
+                self.attrs_stack.pop();
+            }
+            TagEnd::CodeBlock => {
+                self.in_code_block = false;
+                self.flush_line();
+            }
+            TagEnd::List(_) => {
+                self.list_stack.pop();
+            }
+            TagEnd::BlockQuote(_) => {
+                self.flush_line();
+                self.attrs_stack.pop();
+                self.quote_depth = self.quote_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(mut self) -> Vec<Line<'static>> {
+        self.flush_line();
+        while self.lines.last().is_some_and(|line| line.spans.is_empty()) {
+            self.lines.pop();
+        }
+        self.lines
+    }
+
+    fn push_code(&mut self, text: &str) {
+        let attrs = PromptMarkdownAttrs {
+            code: true,
+            ..self.current_attrs()
+        };
+        self.push_styled(text.to_string(), attrs);
+    }
+
+    fn push_text(&mut self, text: &str) {
+        let attrs = if self.in_code_block {
+            PromptMarkdownAttrs {
+                code: true,
+                ..PromptMarkdownAttrs::default()
+            }
+        } else {
+            self.current_attrs()
+        };
+        for (index, part) in text.split('\n').enumerate() {
+            if index > 0 {
+                self.flush_line();
+            }
+            self.push_styled(part.to_string(), attrs);
+        }
+    }
+
+    fn push_styled(&mut self, text: impl Into<String>, attrs: PromptMarkdownAttrs) {
+        let text = text.into();
+        if text.is_empty() {
+            return;
+        }
+        self.ensure_prompt_indent();
+        self.spans
+            .push(Span::styled(text, prompt_markdown_style(attrs)));
+        self.at_line_start = false;
+    }
+
+    fn ensure_prompt_indent(&mut self) {
+        if self.at_line_start {
+            self.spans.push(Span::raw("    "));
+            self.at_line_start = false;
+        }
+    }
+
+    fn flush_line(&mut self) {
+        if self.spans.is_empty() {
+            return;
+        }
+        self.lines.push(Line::from(std::mem::take(&mut self.spans)));
+        self.at_line_start = true;
+    }
+
+    fn ensure_blank_line(&mut self) {
+        self.flush_line();
+        if self.lines.last().is_some_and(|line| !line.spans.is_empty()) {
+            self.lines.push(Line::default());
+        }
+    }
+
+    fn emit_continuation_prefix(&mut self) {
+        if self.quote_depth > 0 {
+            self.push_styled(
+                "> ".repeat(self.quote_depth),
+                PromptMarkdownAttrs {
+                    quote: true,
+                    ..PromptMarkdownAttrs::default()
+                },
+            );
+        }
+    }
+
+    fn should_separate_block(&self) -> bool {
+        !self.lines.is_empty() && !self.lines.last().is_some_and(|line| line.spans.is_empty())
+    }
+
+    fn current_attrs(&self) -> PromptMarkdownAttrs {
+        let mut attrs = PromptMarkdownAttrs::default();
+        for item in &self.attrs_stack {
+            attrs.bold |= item.bold;
+            attrs.italic |= item.italic;
+            attrs.strikethrough |= item.strikethrough;
+            attrs.code |= item.code;
+            attrs.heading |= item.heading;
+            attrs.quote |= item.quote;
+            attrs.link |= item.link;
+        }
+        attrs
+    }
+}
+
+fn heading_prefix(level: HeadingLevel) -> &'static str {
+    match level {
+        HeadingLevel::H1 => "# ",
+        HeadingLevel::H2 => "## ",
+        HeadingLevel::H3 => "### ",
+        HeadingLevel::H4 => "#### ",
+        HeadingLevel::H5 => "##### ",
+        HeadingLevel::H6 => "###### ",
+    }
+}
+
+fn prompt_markdown_style(attrs: PromptMarkdownAttrs) -> Style {
+    let mut style = Style::default().fg(DIM_WHITE);
+    if attrs.heading {
+        style = style.fg(TEAL).add_modifier(Modifier::BOLD);
+    }
+    if attrs.quote {
+        style = style.fg(GREEN);
+    }
+    if attrs.link {
+        style = style.fg(TEAL).add_modifier(Modifier::UNDERLINED);
+    }
+    if attrs.code {
+        style = style.fg(YELLOW).bg(Color::Rgb(35, 35, 42));
+    }
+    if attrs.bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if attrs.italic {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if attrs.strikethrough {
+        style = style.add_modifier(Modifier::CROSSED_OUT);
+    }
+    style
 }
 
 struct DetailRender {
@@ -1926,6 +2239,63 @@ mod tests {
         );
         assert_eq!(lines[10].spans[1].style.bg, Some(SELECTED_BG));
         assert_eq!(lines[10].spans[1].style.fg, Some(WHITE));
+    }
+
+    #[test]
+    fn prompt_markdown_renders_styled_spans() {
+        let lines = render_prompt_block(
+            vec![
+                "# Title".to_string(),
+                String::new(),
+                "Use `code` and **bold**".to_string(),
+            ],
+            true,
+            false,
+        );
+
+        let title = lines[0].spans[1].style;
+        let code = lines[2].spans[2].style;
+        let bold = lines[2].spans[4].style;
+
+        assert_eq!(title.fg, Some(TEAL));
+        assert!(title.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(code.fg, Some(YELLOW));
+        assert!(bold.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn prompt_markdown_preserves_collapsed_logical_lines() {
+        let lines = render_prompt_block(
+            vec![
+                "# Heading".to_string(),
+                String::new(),
+                "one".to_string(),
+                "two".to_string(),
+                "three".to_string(),
+                "four".to_string(),
+                "five".to_string(),
+                "six".to_string(),
+                "seven".to_string(),
+                "eight".to_string(),
+                "nine".to_string(),
+            ],
+            false,
+            false,
+        );
+
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|line| line == "    eight"));
+        assert!(rendered.iter().any(|line| line == "    +1 more lines"));
+        assert!(!rendered.iter().any(|line| line == "    nine"));
     }
 
     #[test]

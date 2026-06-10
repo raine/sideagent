@@ -1207,6 +1207,16 @@ fn transcript_line(line: String) -> Line<'static> {
             ),
             Span::styled(rest.trim_start().to_string(), Style::default().fg(WHITE)),
         ])
+    } else if let Some(rest) = line.strip_prefix("[think]") {
+        Line::from(vec![
+            Span::styled("  💭 ", Style::default().fg(DIM)),
+            Span::styled(
+                rest.trim_start().to_string(),
+                Style::default()
+                    .fg(DIM_WHITE)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ])
     } else if let Some(rest) = line.strip_prefix("[tool→]") {
         tool_transcript_line("tool→", rest, YELLOW)
     } else if let Some(rest) = line.strip_prefix("[tool✓]") {
@@ -2187,6 +2197,19 @@ mod tests {
         let artifacts = lines.iter().position(|line| line == "Artifacts").unwrap();
         let transcript = lines.iter().position(|line| line == "Transcript").unwrap();
         assert!(artifacts < transcript);
+    }
+
+    #[test]
+    fn transcript_thinking_line_uses_icon() {
+        let line = transcript_line("[think] I will inspect the file".to_string());
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "  💭 I will inspect the file");
+        assert_eq!(line.spans[1].style.fg, Some(DIM_WHITE));
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]

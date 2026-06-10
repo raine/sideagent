@@ -1489,22 +1489,17 @@ fn draw_empty_active_placeholder(frame: &mut ratatui::Frame<'_>, area: Rect) {
         x: area.x.saturating_add(2),
         y: area.y.saturating_add(2),
         width: area.width.saturating_sub(4),
-        height: area.height.saturating_sub(3),
+        height: 1,
     };
-    let lines = vec![
-        Line::from(Span::styled(
-            "No active runs",
-            Style::default().fg(DIM_WHITE).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            "New headless runs will appear here.",
+    let line = Line::from(vec![
+        Span::styled("No active runs", Style::default().fg(DIM_WHITE)),
+        Span::styled(
+            " - new headless runs will appear here",
             Style::default().fg(DIM),
-        )),
-    ];
+        ),
+    ]);
     frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .style(Style::default().bg(BG)),
+        Paragraph::new(line).style(Style::default().bg(BG)),
         placeholder_area,
     );
 }

@@ -373,8 +373,9 @@ process id or tmux pane id are reconciled with live process state, so dead stale
 runs move to History as failed instead of staying Active forever. The table view
 shows Active and History sections. Use `Tab` to switch focus, `Up` and `Down` or
 `k` and `j` to navigate, `Enter` to open detail, `i` to show run metadata, `p`
-or click the prompt section to expand long prompts, `Esc` to return from detail,
-`/` to filter history, `?` for help, and `q` to quit.
+or click the prompt section to expand long prompts, `G` to follow live output at
+the bottom, `Esc` to return from detail, `/` to filter history, `?` for help,
+and `q` to quit.
 
 Options:
 

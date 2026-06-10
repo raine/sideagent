@@ -89,6 +89,7 @@ struct MonitorApp {
     active_table_state: TableState,
     history_table_state: TableState,
     detail_scroll: u16,
+    detail_auto_scroll: bool,
     prompt_expanded: bool,
     prompt_click_area: Option<Rect>,
     prompt_more_area: Option<Rect>,
@@ -121,6 +122,7 @@ impl MonitorApp {
             active_table_state: TableState::default(),
             history_table_state: TableState::default(),
             detail_scroll: 0,
+            detail_auto_scroll: false,
             prompt_expanded: false,
             prompt_click_area: None,
             prompt_more_area: None,
@@ -238,6 +240,7 @@ impl MonitorApp {
             }
         }
         self.detail_scroll = 0;
+        self.detail_auto_scroll = false;
         self.prompt_expanded = false;
         self.prompt_more_hovered = false;
         self.selected_run_path = self.selected_run().map(|run| run.path.clone());
@@ -483,9 +486,10 @@ fn handle_table_key(app: &mut MonitorApp, key: KeyEvent) -> bool {
         KeyCode::Home | KeyCode::Char('g') => app.select_first(),
         KeyCode::End | KeyCode::Char('G') => app.select_last(),
         KeyCode::Enter => {
-            if app.selected_run().is_some() {
+            if let Some(run) = app.selected_run() {
+                app.detail_auto_scroll = run.state == RunState::Active;
+                app.detail_scroll = if app.detail_auto_scroll { u16::MAX } else { 0 };
                 app.mode = AppMode::Detail;
-                app.detail_scroll = 0;
             }
         }
         KeyCode::Char('/') => app.start_filter(),
@@ -511,15 +515,25 @@ fn handle_detail_key(app: &mut MonitorApp, key: KeyEvent) -> bool {
         KeyCode::Down | KeyCode::Char('j') => {
             app.detail_scroll = app.detail_scroll.saturating_add(1)
         }
-        KeyCode::Up | KeyCode::Char('k') => app.detail_scroll = app.detail_scroll.saturating_sub(1),
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.detail_scroll = app.detail_scroll.saturating_sub(1);
+            app.detail_auto_scroll = false;
+        }
         KeyCode::PageDown | KeyCode::Char('d') => {
             app.detail_scroll = app.detail_scroll.saturating_add(20)
         }
         KeyCode::PageUp | KeyCode::Char('u') => {
-            app.detail_scroll = app.detail_scroll.saturating_sub(20)
+            app.detail_scroll = app.detail_scroll.saturating_sub(20);
+            app.detail_auto_scroll = false;
         }
-        KeyCode::Home | KeyCode::Char('g') => app.detail_scroll = 0,
-        KeyCode::End | KeyCode::Char('G') => app.detail_scroll = u16::MAX,
+        KeyCode::Home | KeyCode::Char('g') => {
+            app.detail_scroll = 0;
+            app.detail_auto_scroll = false;
+        }
+        KeyCode::End | KeyCode::Char('G') => {
+            app.detail_scroll = u16::MAX;
+            app.detail_auto_scroll = true;
+        }
         _ => {}
     }
     false
@@ -1262,7 +1276,17 @@ fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect)
     let inner_height = chunks[1].height.saturating_sub(2) as usize;
     let render = detail_render(app, usize::MAX);
     let max_scroll = render.lines.len().saturating_sub(inner_height) as u16;
-    app.detail_scroll = app.detail_scroll.min(max_scroll);
+    let is_live = app
+        .selected_run()
+        .is_some_and(|run| run.state == RunState::Active);
+    if app.detail_auto_scroll {
+        app.detail_scroll = max_scroll;
+    } else {
+        app.detail_scroll = app.detail_scroll.min(max_scroll);
+        if is_live && app.detail_scroll >= max_scroll {
+            app.detail_auto_scroll = true;
+        }
+    }
     app.prompt_click_area = visible_content_range(
         chunks[1],
         render.prompt_range.clone(),
@@ -1288,7 +1312,7 @@ fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect)
         .block(table_block(" Run detail ", true))
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, chunks[1]);
-    let footer = Paragraph::new(Line::from(vec![
+    let mut footer_spans = vec![
         Span::styled(" Esc", Style::default().fg(TEAL)),
         Span::styled(" table  ", Style::default().fg(DIM_WHITE)),
         Span::styled("i", Style::default().fg(TEAL)),
@@ -1301,12 +1325,27 @@ fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &mut MonitorApp, area: Rect)
             format!("{}/{}", app.detail_scroll, max_scroll),
             Style::default().fg(DIM),
         ),
+    ];
+    if is_live {
+        footer_spans.push(Span::styled("  G", Style::default().fg(TEAL)));
+        footer_spans.push(Span::styled(" follow  ", Style::default().fg(DIM_WHITE)));
+        if app.detail_auto_scroll {
+            footer_spans.push(Span::styled(
+                " FOLLOW ",
+                Style::default()
+                    .fg(BG)
+                    .bg(TEAL)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    footer_spans.extend([
         Span::styled("  ?", Style::default().fg(TEAL)),
         Span::styled(" help  ", Style::default().fg(DIM_WHITE)),
         Span::styled("q", Style::default().fg(TEAL)),
         Span::styled(" quit", Style::default().fg(DIM_WHITE)),
-    ]))
-    .style(Style::default().bg(BG));
+    ]);
+    let footer = Paragraph::new(Line::from(footer_spans)).style(Style::default().bg(BG));
     frame.render_widget(footer, chunks[2]);
 
     if app.show_run_info {
@@ -1995,6 +2034,48 @@ mod tests {
         app.prompt_expanded = true;
         app.select_next();
         assert!(!app.prompt_expanded);
+    }
+
+    #[test]
+    fn entering_active_detail_enables_follow() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_active_run(
+            dir.path().join("run-a"),
+            "a",
+            "2026-06-09T00:00:00Z",
+            "first",
+        );
+        let mut app = MonitorApp::new(
+            MonitorCore::new(dir.path().to_path_buf()),
+            Duration::from_millis(50),
+        );
+        app.poll().unwrap();
+        handle_table_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        );
+        assert!(app.detail_auto_scroll);
+        assert_eq!(app.detail_scroll, u16::MAX);
+    }
+
+    #[test]
+    fn scrolling_up_disables_follow() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_active_run(
+            dir.path().join("run-a"),
+            "a",
+            "2026-06-09T00:00:00Z",
+            "first",
+        );
+        let mut app = MonitorApp::new(
+            MonitorCore::new(dir.path().to_path_buf()),
+            Duration::from_millis(50),
+        );
+        app.poll().unwrap();
+        app.mode = AppMode::Detail;
+        app.detail_auto_scroll = true;
+        handle_detail_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+        assert!(!app.detail_auto_scroll);
     }
 
     #[test]

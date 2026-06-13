@@ -33,6 +33,8 @@ original conversation.
 
 ![sideagent monitor showing active and completed runs](meta/sideagent-monitor-overview-20260613.webp)
 
+![sideagent opening a delegated implementation run in tmux](meta/sideagent-tmux-delegation-20260607-v2.webp)
+
 ## What it does
 
 - Launches configured agent profiles in tmux or headless mode

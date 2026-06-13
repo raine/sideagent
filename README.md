@@ -31,7 +31,7 @@ task opens in a new tmux pane or runs headlessly. When the run finishes, the
 host agent can inspect the diff, run checks, and continue the review in the
 original conversation.
 
-![sideagent opening a delegated implementation run in tmux](meta/sideagent-tmux-delegation-20260607-v2.webp)
+![sideagent monitor showing active and completed runs](meta/sideagent-monitor-overview-20260613.webp)
 
 ## What it does
 

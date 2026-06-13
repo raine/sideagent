@@ -513,6 +513,43 @@ mod tests {
         serde_json::from_str(line).unwrap()
     }
 
+    struct RecorderFixture {
+        _dir: tempfile::TempDir,
+        recorder: HeadlessRunRecorder,
+    }
+
+    impl RecorderFixture {
+        fn new(args: Vec<String>, started_at: DateTime<Utc>) -> Self {
+            let dir = tempfile::TempDir::new().unwrap();
+            let profile = Profile {
+                command: "agent".to_string(),
+                args: args.clone(),
+                env: Default::default(),
+                interface: AgentInterface::Claude,
+                prompt: PromptDelivery::Argument,
+                headless: true,
+            };
+            let recorder = HeadlessRunRecorder::new(
+                dir.path().join("metadata.json"),
+                "test-profile",
+                &profile,
+                &profile.args,
+                started_at,
+            );
+            Self {
+                _dir: dir,
+                recorder,
+            }
+        }
+
+        fn metadata(&self) -> JsonValue {
+            serde_json::from_str(
+                &fs::read_to_string(self._dir.path().join("metadata.json")).unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
     #[test]
     fn test_claude_headless_flags() {
         assert_eq!(
@@ -587,30 +624,16 @@ mod tests {
 
     #[test]
     fn test_headless_recorder_writes_running_metadata() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let profile = Profile {
-            command: "agent".to_string(),
-            args: vec!["--json".to_string()],
-            env: Default::default(),
-            interface: AgentInterface::Claude,
-            prompt: PromptDelivery::Argument,
-            headless: true,
-        };
-        let mut recorder = HeadlessRunRecorder::new(
-            dir.path().join("metadata.json"),
-            "test-profile",
-            &profile,
-            &profile.args,
+        let mut fixture = RecorderFixture::new(
+            vec!["--json".to_string()],
             DateTime::parse_from_rfc3339("2026-06-09T00:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
         );
 
-        recorder.write().unwrap();
-        recorder.record_pid(1234).unwrap();
-        let value: JsonValue =
-            serde_json::from_str(&fs::read_to_string(dir.path().join("metadata.json")).unwrap())
-                .unwrap();
+        fixture.recorder.write().unwrap();
+        fixture.recorder.record_pid(1234).unwrap();
+        let value = fixture.metadata();
 
         assert_eq!(value["profile"]["name"], "test-profile");
         assert_eq!(value["profile"]["command"], "agent");
@@ -624,23 +647,8 @@ mod tests {
 
     #[test]
     fn test_headless_recorder_finish_records_success() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let profile = Profile {
-            command: "agent".to_string(),
-            args: vec![],
-            env: Default::default(),
-            interface: AgentInterface::Claude,
-            prompt: PromptDelivery::Argument,
-            headless: true,
-        };
-        let mut recorder = HeadlessRunRecorder::new(
-            dir.path().join("metadata.json"),
-            "test-profile",
-            &profile,
-            &profile.args,
-            Utc::now(),
-        );
-        recorder.write().unwrap();
+        let mut fixture = RecorderFixture::new(vec![], Utc::now());
+        fixture.recorder.write().unwrap();
 
         #[cfg(unix)]
         let status = {
@@ -650,10 +658,8 @@ mod tests {
         #[cfg(not(unix))]
         let status = { std::process::Command::new("true").status().unwrap() };
 
-        recorder.finish(&status, true, true, None).unwrap();
-        let value: JsonValue =
-            serde_json::from_str(&fs::read_to_string(dir.path().join("metadata.json")).unwrap())
-                .unwrap();
+        fixture.recorder.finish(&status, true, true, None).unwrap();
+        let value = fixture.metadata();
 
         assert_eq!(value["status"], "success");
         assert_eq!(value["exit_code"], 0);
@@ -663,30 +669,14 @@ mod tests {
 
     #[test]
     fn test_headless_recorder_fail_without_exit_records_failure() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let profile = Profile {
-            command: "agent".to_string(),
-            args: vec![],
-            env: Default::default(),
-            interface: AgentInterface::Claude,
-            prompt: PromptDelivery::Argument,
-            headless: true,
-        };
-        let mut recorder = HeadlessRunRecorder::new(
-            dir.path().join("metadata.json"),
-            "test-profile",
-            &profile,
-            &profile.args,
-            Utc::now(),
-        );
-        recorder.write().unwrap();
+        let mut fixture = RecorderFixture::new(vec![], Utc::now());
+        fixture.recorder.write().unwrap();
 
-        recorder
+        fixture
+            .recorder
             .fail_without_exit("could not spawn agent".to_string())
             .unwrap();
-        let value: JsonValue =
-            serde_json::from_str(&fs::read_to_string(dir.path().join("metadata.json")).unwrap())
-                .unwrap();
+        let value = fixture.metadata();
 
         assert_eq!(value["status"], "failed");
         assert!(value["exit_code"].is_null());

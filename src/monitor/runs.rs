@@ -47,6 +47,35 @@ pub(crate) struct RunSummary {
     pub(crate) metadata_error: Option<String>,
 }
 
+impl RunSummary {
+    fn unknown(
+        id: String,
+        path: PathBuf,
+        stdout_file: PathBuf,
+        metadata_error: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            stdout_file,
+            state: RunState::Unknown,
+            profile_name: None,
+            profile_command: None,
+            profile_args: Vec::new(),
+            interface: None,
+            prompt_delivery: None,
+            pid: None,
+            tmux_pane_id: None,
+            started_at: None,
+            completed_at: None,
+            exit_code: None,
+            completion_event_seen: None,
+            failure: None,
+            metadata_error,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RunMetadata {
     profile: Option<RunProfileMetadata>,
@@ -257,68 +286,14 @@ fn load_run_summary(id: String, run_dir: RunDir) -> RunSummary {
         Ok(contents) => match serde_json::from_str::<RunMetadata>(&contents) {
             Ok(metadata) => metadata,
             Err(error) => {
-                return RunSummary {
-                    id,
-                    path,
-                    stdout_file,
-                    state: RunState::Unknown,
-                    profile_name: None,
-                    profile_command: None,
-                    profile_args: Vec::new(),
-                    interface: None,
-                    prompt_delivery: None,
-                    pid: None,
-                    tmux_pane_id: None,
-                    started_at: None,
-                    completed_at: None,
-                    exit_code: None,
-                    completion_event_seen: None,
-                    failure: None,
-                    metadata_error: Some(error.to_string()),
-                };
+                return RunSummary::unknown(id, path, stdout_file, Some(error.to_string()));
             }
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return RunSummary {
-                id,
-                path,
-                stdout_file,
-                state: RunState::Unknown,
-                profile_name: None,
-                profile_command: None,
-                profile_args: Vec::new(),
-                interface: None,
-                prompt_delivery: None,
-                pid: None,
-                tmux_pane_id: None,
-                started_at: None,
-                completed_at: None,
-                exit_code: None,
-                completion_event_seen: None,
-                failure: None,
-                metadata_error: None,
-            };
+            return RunSummary::unknown(id, path, stdout_file, None);
         }
         Err(error) => {
-            return RunSummary {
-                id,
-                path,
-                stdout_file,
-                state: RunState::Unknown,
-                profile_name: None,
-                profile_command: None,
-                profile_args: Vec::new(),
-                interface: None,
-                prompt_delivery: None,
-                pid: None,
-                tmux_pane_id: None,
-                started_at: None,
-                completed_at: None,
-                exit_code: None,
-                completion_event_seen: None,
-                failure: None,
-                metadata_error: Some(error.to_string()),
-            };
+            return RunSummary::unknown(id, path, stdout_file, Some(error.to_string()));
         }
     };
 

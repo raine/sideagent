@@ -2011,33 +2011,87 @@ mod tests {
             .count()
     }
 
+    struct TuiTestHarness {
+        _dir: tempfile::TempDir,
+        app: MonitorApp,
+    }
+
+    impl TuiTestHarness {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().unwrap();
+            let app = MonitorApp::new(
+                MonitorCore::new(dir.path().to_path_buf()),
+                Duration::from_millis(50),
+            );
+            Self { _dir: dir, app }
+        }
+
+        fn dir(&self) -> &std::path::Path {
+            self._dir.path()
+        }
+
+        fn poll(&mut self) -> Result<()> {
+            self.app.poll()
+        }
+    }
+
+    fn setup_active_and_history(dir: &std::path::Path) {
+        write_active_run(
+            dir.join("run-active"),
+            "active",
+            "2026-06-09T00:00:00Z",
+            "active",
+        );
+        write_run(
+            dir.join("run-done"),
+            "done",
+            "2026-06-09T01:00:00Z",
+            "success",
+            "done",
+        );
+    }
+
+    fn mouse_moved(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    fn mouse_left_down(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
     #[test]
     fn app_poll_splits_active_and_history() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-active"),
+            harness.dir().join("run-active"),
             "demo",
             "2026-06-09T00:00:00Z",
             "hello",
         );
         write_run(
-            dir.path().join("run-done"),
+            harness.dir().join("run-done"),
             "demo",
             "2026-06-09T01:00:00Z",
             "success",
             "done",
         );
 
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
+        harness.poll().unwrap();
 
-        assert_eq!(app.active_indices.len(), 1);
-        assert_eq!(app.filtered_history_indices.len(), 1);
+        assert_eq!(harness.app.active_indices.len(), 1);
+        assert_eq!(harness.app.filtered_history_indices.len(), 1);
         assert_eq!(
-            app.transcripts[&dir.path().join("run-active")].lines,
+            harness.app.transcripts[&harness.dir().join("run-active")].lines,
             vec!["[text]  hello"]
         );
     }
@@ -2076,89 +2130,53 @@ mod tests {
 
     #[test]
     fn arrow_down_moves_from_active_to_history() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_active_run(
-            dir.path().join("run-active"),
-            "active",
-            "2026-06-09T00:00:00Z",
-            "active",
-        );
-        write_run(
-            dir.path().join("run-done"),
-            "done",
-            "2026-06-09T01:00:00Z",
-            "success",
-            "done",
-        );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.focus = Focus::Active;
-        app.select_next();
-        assert_eq!(app.focus, Focus::History);
+        let mut harness = TuiTestHarness::new();
+        setup_active_and_history(harness.dir());
+        harness.poll().unwrap();
+        harness.app.focus = Focus::Active;
+        harness.app.select_next();
+        assert_eq!(harness.app.focus, Focus::History);
     }
 
     #[test]
     fn arrow_up_moves_from_history_to_active() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_active_run(
-            dir.path().join("run-active"),
-            "active",
-            "2026-06-09T00:00:00Z",
-            "active",
-        );
-        write_run(
-            dir.path().join("run-done"),
-            "done",
-            "2026-06-09T01:00:00Z",
-            "success",
-            "done",
-        );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.focus = Focus::History;
-        app.select_previous();
-        assert_eq!(app.focus, Focus::Active);
+        let mut harness = TuiTestHarness::new();
+        setup_active_and_history(harness.dir());
+        harness.poll().unwrap();
+        harness.app.focus = Focus::History;
+        harness.app.select_previous();
+        assert_eq!(harness.app.focus, Focus::Active);
     }
 
     #[test]
     fn app_preserves_selected_run_when_poll_resorts_runs() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
         write_active_run(
-            dir.path().join("run-b"),
+            harness.dir().join("run-b"),
             "b",
             "2026-06-09T01:00:00Z",
             "second",
         );
 
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.select_next();
-        let selected_path = app.selected_run().unwrap().path.clone();
+        harness.poll().unwrap();
+        harness.app.select_next();
+        let selected_path = harness.app.selected_run().unwrap().path.clone();
 
         write_active_run(
-            dir.path().join("run-c"),
+            harness.dir().join("run-c"),
             "c",
             "2026-06-09T02:00:00Z",
             "third",
         );
-        app.poll().unwrap();
+        harness.poll().unwrap();
 
-        assert_eq!(app.selected_run().unwrap().path, selected_path);
+        assert_eq!(harness.app.selected_run().unwrap().path, selected_path);
     }
 
     #[test]
@@ -2258,16 +2276,12 @@ mod tests {
 
     #[test]
     fn detail_collapses_long_prompt() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let run_path = dir.path().join("run-a");
+        let mut harness = TuiTestHarness::new();
+        let run_path = harness.dir().join("run-a");
         write_active_run(run_path.clone(), "a", "2026-06-09T00:00:00Z", "first");
         write_prompt(run_path, 12);
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        let lines = detail_text(&app, usize::MAX);
+        harness.poll().unwrap();
+        let lines = detail_text(&harness.app, usize::MAX);
         assert!(lines.contains(&"  line 10".to_string()));
         assert!(lines.contains(&"  +2 more lines".to_string()));
         assert!(!lines.contains(&"  line 11".to_string()));
@@ -2353,221 +2367,168 @@ mod tests {
 
     #[test]
     fn detail_expands_long_prompt() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let run_path = dir.path().join("run-a");
+        let mut harness = TuiTestHarness::new();
+        let run_path = harness.dir().join("run-a");
         write_active_run(run_path.clone(), "a", "2026-06-09T00:00:00Z", "first");
         write_prompt(run_path, 12);
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.prompt_expanded = true;
-        let lines = detail_text(&app, usize::MAX);
+        harness.poll().unwrap();
+        harness.app.prompt_expanded = true;
+        let lines = detail_text(&harness.app, usize::MAX);
         assert!(lines.contains(&"  line 11".to_string()));
         assert!(!lines.contains(&"  +2 more lines".to_string()));
     }
 
     #[test]
     fn hovering_prompt_sets_hover_state_for_more_line() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.mode = AppMode::Detail;
-        app.prompt_click_area = Some(Rect {
+        harness.poll().unwrap();
+        harness.app.mode = AppMode::Detail;
+        harness.app.prompt_click_area = Some(Rect {
             x: 2,
             y: 3,
             width: 10,
             height: 4,
         });
-        app.prompt_more_area = Some(Rect {
+        harness.app.prompt_more_area = Some(Rect {
             x: 2,
             y: 6,
             width: 10,
             height: 1,
         });
-        handle_mouse(
-            &mut app,
-            crossterm::event::MouseEvent {
-                kind: MouseEventKind::Moved,
-                column: 4,
-                row: 3,
-                modifiers: KeyModifiers::empty(),
-            },
-        );
-        assert!(app.prompt_more_hovered);
+        handle_mouse(&mut harness.app, mouse_moved(4, 3));
+        assert!(harness.app.prompt_more_hovered);
     }
 
     #[test]
     fn hovering_outside_prompt_clears_hover_state() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.mode = AppMode::Detail;
-        app.prompt_more_hovered = true;
-        app.prompt_click_area = Some(Rect {
+        harness.poll().unwrap();
+        harness.app.mode = AppMode::Detail;
+        harness.app.prompt_more_hovered = true;
+        harness.app.prompt_click_area = Some(Rect {
             x: 2,
             y: 3,
             width: 10,
             height: 4,
         });
-        app.prompt_more_area = Some(Rect {
+        harness.app.prompt_more_area = Some(Rect {
             x: 2,
             y: 6,
             width: 10,
             height: 1,
         });
-        handle_mouse(
-            &mut app,
-            crossterm::event::MouseEvent {
-                kind: MouseEventKind::Moved,
-                column: 20,
-                row: 3,
-                modifiers: KeyModifiers::empty(),
-            },
-        );
-        assert!(!app.prompt_more_hovered);
+        handle_mouse(&mut harness.app, mouse_moved(20, 3));
+        assert!(!harness.app.prompt_more_hovered);
     }
 
     #[test]
     fn clicking_visible_prompt_toggles_expansion() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.mode = AppMode::Detail;
-        app.prompt_click_area = Some(Rect {
+        harness.poll().unwrap();
+        harness.app.mode = AppMode::Detail;
+        harness.app.prompt_click_area = Some(Rect {
             x: 2,
             y: 3,
             width: 10,
             height: 2,
         });
-        handle_mouse(
-            &mut app,
-            crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: 4,
-                row: 4,
-                modifiers: KeyModifiers::empty(),
-            },
-        );
-        assert!(app.prompt_expanded);
+        handle_mouse(&mut harness.app, mouse_left_down(4, 4));
+        assert!(harness.app.prompt_expanded);
     }
 
     #[test]
     fn selecting_another_run_collapses_prompt() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
         write_active_run(
-            dir.path().join("run-b"),
+            harness.dir().join("run-b"),
             "b",
             "2026-06-09T01:00:00Z",
             "second",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.prompt_expanded = true;
-        app.select_next();
-        assert!(!app.prompt_expanded);
+        harness.poll().unwrap();
+        harness.app.prompt_expanded = true;
+        harness.app.select_next();
+        assert!(!harness.app.prompt_expanded);
     }
 
     #[test]
     fn entering_active_detail_enables_follow() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
+        harness.poll().unwrap();
         handle_table_key(
-            &mut app,
+            &mut harness.app,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
-        assert!(app.detail_auto_scroll);
-        assert_eq!(app.detail_scroll, u16::MAX);
+        assert!(harness.app.detail_auto_scroll);
+        assert_eq!(harness.app.detail_scroll, u16::MAX);
     }
 
     #[test]
     fn scrolling_up_disables_follow() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
+        harness.poll().unwrap();
+        harness.app.mode = AppMode::Detail;
+        harness.app.detail_auto_scroll = true;
+        handle_detail_key(
+            &mut harness.app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
         );
-        app.poll().unwrap();
-        app.mode = AppMode::Detail;
-        app.detail_auto_scroll = true;
-        handle_detail_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
-        assert!(!app.detail_auto_scroll);
+        assert!(!harness.app.detail_auto_scroll);
     }
 
     #[test]
     fn detail_scroll_is_clamped_to_content() {
-        let dir = tempfile::TempDir::new().unwrap();
+        let mut harness = TuiTestHarness::new();
         write_active_run(
-            dir.path().join("run-a"),
+            harness.dir().join("run-a"),
             "a",
             "2026-06-09T00:00:00Z",
             "first",
         );
-        let mut app = MonitorApp::new(
-            MonitorCore::new(dir.path().to_path_buf()),
-            Duration::from_millis(50),
-        );
-        app.poll().unwrap();
-        app.detail_scroll = u16::MAX;
+        harness.poll().unwrap();
+        harness.app.detail_scroll = u16::MAX;
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
         terminal
-            .draw(|frame| draw_detail(frame, &mut app, frame.area()))
+            .draw(|frame| draw_detail(frame, &mut harness.app, frame.area()))
             .unwrap();
-        assert!(app.detail_scroll < u16::MAX);
+        assert!(harness.app.detail_scroll < u16::MAX);
     }
 
     #[test]

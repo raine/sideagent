@@ -9,6 +9,42 @@ fn config_yaml(profile: &str) -> String {
     format!("default_profile: {profile}\nprofiles:\n  {profile}:\n    command: /bin/true\n")
 }
 
+struct ProfilesOutput {
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_profiles(home: &Path, current_dir: &Path) -> ProfilesOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
+        .arg("profiles")
+        .env("HOME", home)
+        .current_dir(current_dir)
+        .output()
+        .expect("failed to run sideagent profiles");
+    ProfilesOutput {
+        status: output.status,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+fn run_profiles_with_config(home: &Path, current_dir: &Path, config: &Path) -> ProfilesOutput {
+    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
+        .arg("profiles")
+        .arg("--config")
+        .arg(config)
+        .env("HOME", home)
+        .current_dir(current_dir)
+        .output()
+        .expect("failed to run sideagent profiles");
+    ProfilesOutput {
+        status: output.status,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
 #[test]
 fn test_bare_cli_prompts_help() {
     // Running with --help should succeed and mention the app
@@ -108,23 +144,17 @@ fn test_profiles_discovers_nearest_project_config() {
     std::fs::write(root.join(".sideagent.yaml"), config_yaml("root")).unwrap();
     std::fs::write(&expected, config_yaml("package")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("profiles")
-        .env("HOME", home.path())
-        .current_dir(&nested)
-        .output()
-        .expect("failed to run sideagent profiles");
+    let output = run_profiles(home.path(), &nested);
 
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stderr: {}", output.stderr);
     let expected_path = expected.canonicalize().unwrap_or(expected);
-    assert!(stdout.contains(&format!("config: {}", expected_path.display())));
-    assert!(stdout.contains("package default"));
-    assert!(!stdout.contains("root default"));
+    assert!(
+        output
+            .stdout
+            .contains(&format!("config: {}", expected_path.display()))
+    );
+    assert!(output.stdout.contains("package default"));
+    assert!(!output.stdout.contains("root default"));
 }
 
 #[test]
@@ -138,21 +168,11 @@ fn test_project_config_replaces_user_config_completely() {
     std::fs::write(user_dir.join("config.yaml"), config_yaml("user")).unwrap();
     std::fs::write(project.join(".sideagent.yaml"), config_yaml("project")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("profiles")
-        .env("HOME", home.path())
-        .current_dir(&project)
-        .output()
-        .expect("failed to run sideagent profiles");
+    let output = run_profiles(home.path(), &project);
 
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("project default"));
-    assert!(!stdout.contains("user default"));
+    assert!(output.status.success(), "stderr: {}", output.stderr);
+    assert!(output.stdout.contains("project default"));
+    assert!(!output.stdout.contains("user default"));
 }
 
 #[test]
@@ -164,23 +184,11 @@ fn test_explicit_config_overrides_project_discovery() {
     std::fs::write(project.join(".sideagent.yaml"), config_yaml("project")).unwrap();
     std::fs::write(&explicit, config_yaml("explicit")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("profiles")
-        .arg("--config")
-        .arg(&explicit)
-        .env("HOME", home.path())
-        .current_dir(&project)
-        .output()
-        .expect("failed to run sideagent profiles");
+    let output = run_profiles_with_config(home.path(), &project, &explicit);
 
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("explicit default"));
-    assert!(!stdout.contains("project default"));
+    assert!(output.status.success(), "stderr: {}", output.stderr);
+    assert!(output.stdout.contains("explicit default"));
+    assert!(!output.stdout.contains("project default"));
 }
 
 #[test]
@@ -192,20 +200,10 @@ fn test_profiles_falls_back_to_user_config() {
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(&user_config, config_yaml("user")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("profiles")
-        .env("HOME", home.path())
-        .current_dir(&project)
-        .output()
-        .expect("failed to run sideagent profiles");
+    let output = run_profiles(home.path(), &project);
 
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("user default"));
+    assert!(output.status.success(), "stderr: {}", output.stderr);
+    assert!(output.stdout.contains("user default"));
 }
 
 #[test]
@@ -218,16 +216,13 @@ fn test_invalid_project_config_does_not_fallback_to_user_config() {
     std::fs::write(&user_config, config_yaml("user")).unwrap();
     std::fs::write(project.join(".sideagent.yaml"), "profiles: []\n").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("profiles")
-        .env("HOME", home.path())
-        .current_dir(&project)
-        .output()
-        .expect("failed to run sideagent profiles");
+    let output = run_profiles(home.path(), &project);
 
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("could not parse config file") || stderr.contains("default_profile"));
+    assert!(
+        output.stderr.contains("could not parse config file")
+            || output.stderr.contains("default_profile")
+    );
 }
 
 #[cfg(unix)]
@@ -243,36 +238,72 @@ fn headless_runs_dir(home: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
+struct HeadlessRunFixture {
+    home: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl HeadlessRunFixture {
+    fn new() -> Self {
+        Self {
+            home: tempfile::tempdir().unwrap(),
+        }
+    }
+
+    fn write_fake_agent_config(&self, script: &str) -> PathBuf {
+        let fake_agent = self.home.path().join("fake-claude.sh");
+        write_executable(&fake_agent, script);
+        let config = self.home.path().join("config.yaml");
+        fs::write(
+            &config,
+            format!(
+                "default_profile: fake-claude\nheadless: true\nprofiles:\n  fake-claude:\n    command: {}\n    interface: claude\n",
+                fake_agent.display()
+            ),
+        )
+        .unwrap();
+        config
+    }
+
+    fn run(&self, config: &Path, prompt: &str) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_sideagent"))
+            .arg("run")
+            .arg("--config")
+            .arg(config)
+            .arg(prompt)
+            .env("HOME", self.home.path())
+            .output()
+            .expect("failed to run sideagent headless")
+    }
+
+    fn run_dirs(&self) -> Vec<PathBuf> {
+        fs::read_dir(headless_runs_dir(self.home.path()))
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+fn headless_run_dirs(home: &Path) -> Vec<PathBuf> {
+    fs::read_dir(headless_runs_dir(home))
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect()
+}
+
+#[cfg(unix)]
 #[test]
 fn test_headless_known_interface_writes_metadata_and_stdout_jsonl() {
-    let home = tempfile::tempdir().unwrap();
-    let fake_agent = home.path().join("fake-claude.sh");
-    write_executable(
-        &fake_agent,
+    let fixture = HeadlessRunFixture::new();
+    let config = fixture.write_fake_agent_config(
         r#"#!/bin/sh
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","num_turns":0,"duration_ms":0,"total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}'
 "#,
     );
 
-    let config = home.path().join("config.yaml");
-    fs::write(
-        &config,
-        format!(
-            "default_profile: fake-claude\nheadless: true\nprofiles:\n  fake-claude:\n    command: {}\n    interface: claude\n",
-            fake_agent.display()
-        ),
-    )
-    .unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("run")
-        .arg("--config")
-        .arg(&config)
-        .arg("test prompt")
-        .env("HOME", home.path())
-        .output()
-        .expect("failed to run sideagent headless");
+    let output = fixture.run(&config, "test prompt");
 
     assert!(
         output.status.success(),
@@ -285,14 +316,10 @@ printf '%s\n' '{"type":"result","subtype":"success","num_turns":0,"duration_ms":
     assert!(stdout.contains("[turn]  ok"));
     assert!(stdout.contains("Full log:"));
 
-    let runs_dir = headless_runs_dir(home.path());
-    let run_dirs: Vec<_> = fs::read_dir(&runs_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .collect();
+    let run_dirs = fixture.run_dirs();
     assert_eq!(run_dirs.len(), 1);
 
-    let run_dir = run_dirs[0].path();
+    let run_dir = &run_dirs[0];
     let metadata = fs::read_to_string(run_dir.join("metadata.json")).unwrap();
     let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
     assert_eq!(metadata["profile"]["name"], "fake-claude");
@@ -316,47 +343,24 @@ printf '%s\n' '{"type":"result","subtype":"success","num_turns":0,"duration_ms":
 #[cfg(unix)]
 #[test]
 fn test_headless_known_interface_finalizes_missing_completion_as_failed() {
-    let home = tempfile::tempdir().unwrap();
-    let fake_agent = home.path().join("fake-claude.sh");
-    write_executable(
-        &fake_agent,
+    let fixture = HeadlessRunFixture::new();
+    let config = fixture.write_fake_agent_config(
         r#"#!/bin/sh
 printf '%s\n' '{"type":"system","subtype":"init"}'
 exit 7
 "#,
     );
 
-    let config = home.path().join("config.yaml");
-    fs::write(
-        &config,
-        format!(
-            "default_profile: fake-claude\nheadless: true\nprofiles:\n  fake-claude:\n    command: {}\n    interface: claude\n",
-            fake_agent.display()
-        ),
-    )
-    .unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_sideagent"))
-        .arg("run")
-        .arg("--config")
-        .arg(&config)
-        .arg("test prompt")
-        .env("HOME", home.path())
-        .output()
-        .expect("failed to run sideagent headless");
+    let output = fixture.run(&config, "test prompt");
 
     assert_eq!(output.status.code(), Some(7));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("exited without a completion event"));
 
-    let runs_dir = headless_runs_dir(home.path());
-    let run_dirs: Vec<_> = fs::read_dir(&runs_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .collect();
+    let run_dirs = fixture.run_dirs();
     assert_eq!(run_dirs.len(), 1);
 
-    let metadata = fs::read_to_string(run_dirs[0].path().join("metadata.json")).unwrap();
+    let metadata = fs::read_to_string(run_dirs[0].join("metadata.json")).unwrap();
     let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
     assert_eq!(metadata["status"], "failed");
     assert_eq!(metadata["exit_code"], 7);
@@ -401,14 +405,10 @@ fn test_headless_generic_prompt_file_arg_writes_prompt_without_stdout_log() {
     assert!(stdout.contains("prompt body"));
     assert!(!stdout.contains("Full log:"));
 
-    let runs_dir = headless_runs_dir(home.path());
-    let run_dirs: Vec<_> = fs::read_dir(&runs_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .collect();
+    let run_dirs = headless_run_dirs(home.path());
     assert_eq!(run_dirs.len(), 1);
 
-    let run_dir = run_dirs[0].path();
+    let run_dir = &run_dirs[0];
     assert!(run_dir.join("prompt.md").exists());
     assert!(!run_dir.join("stdout.jsonl").exists());
     assert!(!run_dir.join("metadata.json").exists());

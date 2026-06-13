@@ -105,11 +105,12 @@ Tmux runs get a directory under:
 
 The run directory contains:
 
-| File        | Purpose                                               |
-| ----------- | ----------------------------------------------------- |
-| `prompt.md` | The augmented prompt sent to the delegated agent      |
-| `launch.sh` | The generated executable launcher script              |
-| `done.md`   | The completion summary written by the delegated agent |
+| File            | Purpose                                               |
+| --------------- | ----------------------------------------------------- |
+| `metadata.json` | Project, profile, command, interface, timestamps      |
+| `prompt.md`     | The augmented prompt sent to the delegated agent      |
+| `launch.sh`     | The generated executable launcher script              |
+| `done.md`       | The completion summary written by the delegated agent |
 
 In tmux mode, `sideagent` appends instructions to the prompt telling the
 delegated agent to write a concise summary to `done.md.tmp`, then atomically
@@ -304,7 +305,7 @@ Known streaming headless interfaces create a run directory with:
 
 | File            | Purpose                                                     |
 | --------------- | ----------------------------------------------------------- |
-| `metadata.json` | Profile, command, interface, timestamps, status, exit code  |
+| `metadata.json` | Project, profile, command, interface, timestamps, status    |
 | `stdout.jsonl`  | Raw machine-readable stdout stream                          |
 | `prompt.md`     | Prompt file for `prompt-file-arg` profiles                  |
 

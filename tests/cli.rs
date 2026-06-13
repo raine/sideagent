@@ -322,6 +322,7 @@ printf '%s\n' '{"type":"result","subtype":"success","num_turns":0,"duration_ms":
     let run_dir = &run_dirs[0];
     let metadata = fs::read_to_string(run_dir.join("metadata.json")).unwrap();
     let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(metadata["project"], "sideagent");
     assert_eq!(metadata["profile"]["name"], "fake-claude");
     assert_eq!(metadata["interface"], "claude");
     assert_eq!(metadata["status"], "success");
@@ -436,7 +437,7 @@ fn test_monitor_once_renders_runs_and_detail() {
     fs::create_dir_all(&run_path).unwrap();
     fs::write(
         run_path.join("metadata.json"),
-        r#"{"profile":{"name":"demo","command":"agent","args":[]},"interface":"claude","started_at":"2026-06-09T00:00:00Z","status":"running"}"#,
+        r#"{"project":"sample","profile":{"name":"demo","command":"agent","args":[]},"interface":"claude","started_at":"2026-06-09T00:00:00Z","status":"running"}"#,
     )
     .unwrap();
     fs::write(
@@ -462,6 +463,7 @@ fn test_monitor_once_renders_runs_and_detail() {
     assert!(stdout.contains("sideagent-monitor"));
     assert!(stdout.contains("Active"));
     assert!(stdout.contains("Started | Project | Profile | Interface | Mode | Stage | Dur"));
+    assert!(stdout.contains("sample"));
     assert!(stdout.contains("demo"));
     assert!(stdout.contains("[text]  hello"));
 }

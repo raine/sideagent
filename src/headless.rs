@@ -162,6 +162,7 @@ struct HeadlessRun {
 
 #[derive(Serialize)]
 struct HeadlessRunMetadata {
+    project: String,
     profile: HeadlessRunProfileMetadata,
     interface: String,
     prompt_delivery: String,
@@ -197,6 +198,11 @@ impl HeadlessRunRecorder {
         Self {
             metadata_file,
             metadata: HeadlessRunMetadata {
+                project: std::env::current_dir()
+                    .ok()
+                    .as_deref()
+                    .map(crate::git_worktree::resolve_project_name)
+                    .unwrap_or_else(|| "unknown".to_string()),
                 profile: HeadlessRunProfileMetadata {
                     name: profile_name.to_string(),
                     command: profile.command.clone(),

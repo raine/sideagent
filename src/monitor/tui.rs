@@ -606,12 +606,7 @@ fn profile_label(run: &RunSummary) -> &str {
 }
 
 fn project_label(run: &RunSummary) -> String {
-    run.path
-        .parent()
-        .and_then(|path| path.file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("runs")
-        .to_string()
+    run.project.clone().unwrap_or_else(|| "unknown".to_string())
 }
 
 fn mode_label(run: &RunSummary) -> &str {

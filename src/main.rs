@@ -4,6 +4,7 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use std::path::PathBuf;
 
 mod config;
+mod git_worktree;
 mod headless;
 mod install_skill;
 mod launcher;

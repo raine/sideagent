@@ -1,4 +1,4 @@
-use crate::config::{self, AgentInterface};
+use crate::config::{self, AgentInterface, Profile, PromptDelivery};
 use crate::headless;
 use crate::launcher;
 use crate::prompt;
@@ -7,6 +7,7 @@ use crate::tmux;
 use crate::{ConfigArgs, RunArgs};
 use anyhow::{Context, Result, bail};
 use chrono::{SecondsFormat, Utc};
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -35,6 +36,14 @@ pub fn run(args: RunArgs) -> Result<()> {
         trust_cursor_workspace(&cwd)?;
     }
     let pane_id = tmux::split_window(&run_dir.launcher_file, &cwd)?;
+    let mut recorder = TmuxRunRecorder::new(
+        run_dir.metadata_file.clone(),
+        profile_name,
+        profile,
+        &pane_id,
+        &cwd,
+    );
+    recorder.write()?;
 
     eprintln!("profile: {profile_name}");
     eprintln!("config: {}", config_path.display());
@@ -42,12 +51,17 @@ pub fn run(args: RunArgs) -> Result<()> {
     eprintln!("run dir: {}", run_dir.path.display());
     eprintln!("waiting for: {}", run_dir.done_file.display());
 
-    wait_for_done(&run_dir.done_file, &pane_id)?;
+    let done_result = wait_for_done(&run_dir.done_file, &pane_id);
+    let summary = fs::read_to_string(&run_dir.done_file).unwrap_or_default();
+    if let Err(error) = done_result {
+        let _ = recorder.finish("failed", Some(format!("{error:#}")));
+        return Err(error);
+    }
+    recorder.finish("success", None)?;
 
     // Kill the delegated agent's pane -- it stays running after writing done.md
     let _ = tmux::kill_pane(&pane_id);
 
-    let summary = fs::read_to_string(&run_dir.done_file).unwrap_or_default();
     if summary.trim().is_empty() {
         println!("done: {}", run_dir.done_file.display());
     } else {
@@ -55,6 +69,101 @@ pub fn run(args: RunArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+struct TmuxRunMetadata {
+    project: String,
+    profile: TmuxRunProfileMetadata,
+    interface: String,
+    prompt_delivery: String,
+    started_at: String,
+    completed_at: Option<String>,
+    status: String,
+    exit_code: Option<i32>,
+    completion_event_seen: Option<bool>,
+    failure: Option<String>,
+    pid: Option<u32>,
+    tmux_pane_id: String,
+}
+
+#[derive(Serialize)]
+struct TmuxRunProfileMetadata {
+    name: String,
+    command: String,
+    args: Vec<String>,
+}
+
+struct TmuxRunRecorder {
+    metadata_file: PathBuf,
+    metadata: TmuxRunMetadata,
+}
+
+impl TmuxRunRecorder {
+    fn new(
+        metadata_file: PathBuf,
+        profile_name: &str,
+        profile: &Profile,
+        pane_id: &str,
+        cwd: &Path,
+    ) -> Self {
+        Self {
+            metadata_file,
+            metadata: TmuxRunMetadata {
+                project: crate::git_worktree::resolve_project_name(cwd),
+                profile: TmuxRunProfileMetadata {
+                    name: profile_name.to_string(),
+                    command: profile.command.clone(),
+                    args: profile.args.clone(),
+                },
+                interface: interface_name(profile.interface).to_string(),
+                prompt_delivery: prompt_delivery_name(profile.prompt).to_string(),
+                started_at: Utc::now().to_rfc3339(),
+                completed_at: None,
+                status: "running".to_string(),
+                exit_code: None,
+                completion_event_seen: None,
+                failure: None,
+                pid: Some(std::process::id()),
+                tmux_pane_id: pane_id.to_string(),
+            },
+        }
+    }
+
+    fn write(&self) -> Result<()> {
+        let tmp = self.metadata_file.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(&self.metadata)
+            .context("could not serialize tmux run metadata")?;
+        fs::write(&tmp, bytes).with_context(|| format!("could not write {}", tmp.display()))?;
+        fs::rename(&tmp, &self.metadata_file)
+            .with_context(|| format!("could not replace {}", self.metadata_file.display()))?;
+        Ok(())
+    }
+
+    fn finish(&mut self, status: &str, failure: Option<String>) -> Result<()> {
+        self.metadata.completed_at = Some(Utc::now().to_rfc3339());
+        self.metadata.status = status.to_string();
+        self.metadata.failure = failure;
+        self.write()
+    }
+}
+
+fn interface_name(interface: AgentInterface) -> &'static str {
+    match interface {
+        AgentInterface::Claude => "claude",
+        AgentInterface::Codex => "codex",
+        AgentInterface::Cursor => "cursor",
+        AgentInterface::Opencode => "opencode",
+        AgentInterface::Generic => "generic",
+    }
+}
+
+fn prompt_delivery_name(prompt: PromptDelivery) -> &'static str {
+    match prompt {
+        PromptDelivery::Argument => "argument",
+        PromptDelivery::Stdin => "stdin",
+        PromptDelivery::PromptFileArg => "prompt-file-arg",
+    }
 }
 
 pub fn profiles(args: ConfigArgs) -> Result<()> {

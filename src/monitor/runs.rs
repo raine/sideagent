@@ -32,6 +32,7 @@ pub(crate) struct RunSummary {
     pub(crate) path: PathBuf,
     pub(crate) stdout_file: PathBuf,
     pub(crate) state: RunState,
+    pub(crate) project: Option<String>,
     pub(crate) profile_name: Option<String>,
     pub(crate) profile_command: Option<String>,
     pub(crate) profile_args: Vec<String>,
@@ -59,6 +60,7 @@ impl RunSummary {
             path,
             stdout_file,
             state: RunState::Unknown,
+            project: None,
             profile_name: None,
             profile_command: None,
             profile_args: Vec::new(),
@@ -78,6 +80,7 @@ impl RunSummary {
 
 #[derive(Debug, Deserialize)]
 struct RunMetadata {
+    project: Option<String>,
     profile: Option<RunProfileMetadata>,
     interface: Option<String>,
     prompt_delivery: Option<String>,
@@ -306,6 +309,7 @@ fn load_run_summary(id: String, run_dir: RunDir) -> RunSummary {
         path,
         stdout_file,
         state,
+        project: metadata.project,
         profile_name: metadata.profile.as_ref().and_then(|p| p.name.clone()),
         profile_command: metadata.profile.as_ref().and_then(|p| p.command.clone()),
         profile_args: metadata
@@ -339,6 +343,7 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
         let metadata = format!(
             r#"{{
+  "project": "sample",
   "profile": {{
     "name": "test",
     "command": "agent",
@@ -368,6 +373,7 @@ mod tests {
             vec!["new", "failed", "old", "unknown"]
         );
         assert_eq!(runs[0].state, RunState::Success);
+        assert_eq!(runs[0].project.as_deref(), Some("sample"));
         assert_eq!(runs[1].state, RunState::Failed);
         assert_eq!(runs[2].state, RunState::Active);
         assert_eq!(runs[3].state, RunState::Unknown);
